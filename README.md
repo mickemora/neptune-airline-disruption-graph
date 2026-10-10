@@ -92,11 +92,17 @@ cdk bootstrap                       # once per account/region
 cdk deploy --all                    # ~15-20 min, mostly the Neptune cluster
 ```
 
+`cdk deploy --all` creates up to three stacks: the core graph (`NeptuneAirlineDisruptionStack`),
+the Graph Explorer notebook (`NeptuneAirlineGraphExplorerStack`) and the hosted AI agent
+(`NeptuneAirlineAgentCoreStack`). The first synth also builds the agent's code package for
+Linux arm64 (`build/agent_runtime.zip`), which downloads its Python dependencies once.
+
 Optional context overrides:
 
 ```bash
 cdk deploy --all -c neptuneEngineVersion=1.4.7.1 -c minNcu=1 -c maxNcu=16
-cdk deploy -c graphExplorer=false     # core stack only, no Graph Explorer notebook
+cdk deploy --all -c graphExplorer=false   # skip the Graph Explorer notebook
+cdk deploy --all -c agentCore=false       # skip the hosted AI agent
 ```
 
 ## Load and explore
@@ -243,6 +249,50 @@ Use another model or inference profile with `export AGENT_MODEL_ID=<id>`. Your A
 needs `bedrock:InvokeModel*` and `lambda:InvokeFunction`. If Bedrock answers "access denied",
 open the Bedrock console's model catalog once and complete Anthropic's first-use form.
 
+### Run the agent on Amazon Bedrock AgentCore
+
+The same agent, hosted: `NeptuneAirlineAgentCoreStack` deploys it to **AgentCore Runtime**,
+publishes the six tools through **AgentCore Gateway** as MCP tools, and keeps each chat's history
+in **AgentCore Memory**.
+
+```
+python -m agent.chat --remote
+        │  InvokeAgentRuntime (one chat = one runtime session)
+        ▼
+AgentCore Runtime ── Strands agent + Claude on Bedrock ── AgentCore Memory (chat history)
+        │  MCP over HTTPS, SigV4-signed with the runtime's role (gateway authorizer: AWS_IAM)
+        ▼
+AgentCore Gateway ── target "graph": 6 tools ──► tools Lambda ──► graph API Lambda ──► Neptune
+```
+
+```bash
+cdk deploy --all                         # includes the agent stack
+python -m agent.chat --remote            # chat with the hosted agent
+python -m agent.chat --remote --ask "WN3553 is going to be 3 hours late. What should I do first?"
+```
+
+The remote chat prints the hosted agent's answer and the tools it used. Follow-up questions in
+the same chat share a runtime session, so the agent remembers the conversation.
+
+| Piece | What it is |
+|---|---|
+| `agent/runtime_app.py` | The Runtime service (`main.py` in the package): Strands agent, tools from the gateway via MCP, Memory session manager |
+| `agent/gateway_lambda.py` | Gateway target: maps MCP tool calls onto `agent/actions.py`, the same code the local agent uses |
+| `agent/tool_schemas.py` | Tool names, descriptions and input schemas, used for the gateway target and checked against `actions.py` by tests |
+| `scripts/build_agent_package.py` | Builds `build/agent_runtime.zip`: Linux arm64 wheels for Python 3.13 plus the agent code (no Docker needed) |
+| `infra/agentcore_stack.py` | Runtime, Gateway, GatewayTarget, Memory, the tools Lambda and least-privilege IAM roles |
+
+Security: the gateway only accepts SigV4-signed calls (the runtime's role has
+`bedrock-agentcore:InvokeGateway` on that one gateway), the tools stay read-only, and the
+runtime role can only invoke Bedrock models, use its own memory and write its own logs.
+
+Cost: AgentCore Runtime, Gateway and Memory bill by usage (requests, compute while the agent is
+working, memory events), so the agent stack has no meaningful idle cost; each conversation
+adds Bedrock model usage. Pin a model with `cdk deploy --all -c agentModelId=<id>`.
+
+Logs: the runtime writes to CloudWatch under `/aws/bedrock-agentcore/runtimes/`, and the tools
+Lambda logs each tool call (name and arguments).
+
 ### How it works
 
 1. `AIRCRAFT_RIPPLE` finds the aircraft's remaining legs. `propagate_aircraft_delay` pushes the delay forward, reducing it by any turn time beyond the 35-minute minimum.
@@ -284,8 +334,9 @@ CI (`.github/workflows/ci.yml`) runs the tests and `cdk synth` on every push.
 cdk destroy --all
 ```
 
-The cluster, instance, bucket (and its objects) and log group are all set to be deleted with
-the stack, with no final snapshot.
+The cluster, instance, bucket (and its objects), log groups, the Graph Explorer notebook and
+the AgentCore runtime, gateway and memory are all deleted with their stacks, with no final
+snapshot.
 
 ## Project layout
 
@@ -296,6 +347,10 @@ functions/graph_api/         Lambda: handler.py, queries.py (openCypher), impact
 datagen/                     Synthetic network, schedule, crew and passenger generator
 scripts/graph.py             CLI that invokes the Lambda
 scripts/visualize.py         Builds the interactive HTML views
-agent/                       AI operations agent (Strands + Bedrock): tools, prompt, chat CLI
+agent/                       AI operations agent (Strands + Bedrock): tools, prompt, chat CLI,
+                             AgentCore runtime app and gateway tools Lambda
+infra/graph_explorer_stack.py  Neptune workbench notebook with Graph Explorer
+infra/agentcore_stack.py     AgentCore Runtime, Gateway, Memory for the hosted agent
+scripts/build_agent_package.py  Builds the AgentCore code package (Linux arm64)
 tests/                       pytest suite + in-memory query stand-ins
 ```
