@@ -54,10 +54,17 @@ ORDER BY hops
 
 # --- Disruption impact building blocks ---------------------------------------
 
-# The disrupted flight plus every later leg flown by the same aircraft.
+FLIGHT_LEG = """
+MATCH (f:Flight {flightId: $flightId})
+RETURN f.flightId AS flightId, f.legSeq AS legSeq, f.origin AS origin,
+       f.dest AS dest, f.schedDepMin AS dep, f.schedArrMin AS arr, f.tail AS tail
+"""
+
+# Later legs flown by the same aircraft. Note: within one MATCH pattern openCypher never
+# reuses a relationship, so d can never be f here; the disrupted flight comes from FLIGHT_LEG.
 AIRCRAFT_RIPPLE = """
 MATCH (f:Flight {flightId: $flightId})<-[:OPERATES]-(:Aircraft)-[:OPERATES]->(d:Flight)
-WHERE d.legSeq >= f.legSeq
+WHERE d.legSeq > f.legSeq
 RETURN d.flightId AS flightId, d.legSeq AS legSeq, d.origin AS origin,
        d.dest AS dest, d.schedDepMin AS dep, d.schedArrMin AS arr, d.tail AS tail
 ORDER BY legSeq

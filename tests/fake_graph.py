@@ -44,7 +44,16 @@ class FakeGraph:
         for b in _read(e / "booked_on.csv"):
             self.bookings[b["START_ID"][3:]].append(b["END_ID"][3:])
 
-    # AIRCRAFT_RIPPLE
+    # FLIGHT_LEG (empty list when the flight does not exist)
+    def flight_leg(self, flightId):
+        f = self.flights.get(flightId)
+        return [] if f is None else [{"flightId": f["flightId"], "legSeq": f["legSeq"],
+                                      "origin": f["origin"], "dest": f["dest"],
+                                      "dep": f["schedDepMin"], "arr": f["schedArrMin"],
+                                      "tail": f["tail"]}]
+
+    # AIRCRAFT_RIPPLE: strictly later legs (openCypher never reuses a relationship within
+    # one pattern, so the disrupted flight itself is never returned)
     def ripple(self, flightId):
         f = self.flights[flightId]
         return sorted(
@@ -52,7 +61,7 @@ class FakeGraph:
               "dest": d["dest"], "dep": d["schedDepMin"], "arr": d["schedArrMin"],
               "tail": d["tail"]}
              for d in self.flights.values()
-             if d["tail"] == f["tail"] and d["legSeq"] >= f["legSeq"]),
+             if d["tail"] == f["tail"] and d["legSeq"] > f["legSeq"]),
             key=lambda r: r["legSeq"])
 
     # CREW_SEQUENCES
@@ -121,6 +130,8 @@ class FakeGraph:
     def run(self, query, params=None):
         """Drop-in replacement for handler.run, dispatching on query text."""
         params = params or {}
+        if query == queries.FLIGHT_LEG:
+            return self.flight_leg(params["flightId"])
         if query == queries.AIRCRAFT_RIPPLE:
             return self.ripple(params["flightId"])
         if query == queries.CREW_SEQUENCES:

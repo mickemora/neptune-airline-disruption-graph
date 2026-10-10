@@ -64,14 +64,14 @@ graph LR
 |---|---|---|
 | `Airport` | 26 | `code`, `city`, `isHub` |
 | `Aircraft` | 40 | `tail`, `type` (737-700 / -800 / MAX 8), `seats` |
-| `Flight` | 239 | `flightId`, `origin`, `dest`, `schedDepMin`, `schedArrMin`, `tail`, `legSeq`, `seatsAvailable` |
-| `Crew` | 481 | `role`, `pairingId`, `dutyLimitMin` |
-| `Passenger` | ~27.8k | `tier` (A-List Preferred / A-List / Member / None) |
-| `BOOKED_ON` | ~32.3k | `pnr`, `segment`. About 4.5k are second legs of connections. |
-| `NEXT_LEG` / `ASSIGNED_TO` / `ROUTE` | 199 / 1,374 / 132 | `turnMin` / `seq` / `distanceMi` |
+| `Flight` | 234 | `flightId`, `origin`, `dest`, `schedDepMin`, `schedArrMin`, `tail`, `legSeq`, `seatsAvailable` |
+| `Crew` | 472 | `role`, `pairingId`, `dutyLimitMin` |
+| `Passenger` | ~27.4k | `tier` (A-List Preferred / A-List / Member / None) |
+| `BOOKED_ON` | ~31.7k | `pnr`, `segment`. About 4.3k are second legs of connections. |
+| `NEXT_LEG` / `ASSIGNED_TO` / `ROUTE` | 194 / 1,333 / 132 | `turnMin` / `seq` / `distanceMi` |
 
 Times are stored as **minutes after midnight in hub (Central) time** (plus `HH:MM` strings for
-display), which keeps connection arithmetic simple. About 83% of flights touch DAL. The rest
+display), which keeps connection arithmetic simple. About 81% of flights touch DAL. The rest
 are point-to-point routes between focus cities.
 
 ## Deploy
@@ -104,8 +104,8 @@ python scripts/graph.py load                  # starts two bulk-load jobs (nodes
 python scripts/graph.py query summary
 python scripts/graph.py query hub_connections --params '{"limit": 5}'
 python scripts/graph.py query tightest_turns
-python scripts/graph.py query aircraft_rotation --params '{"tail": "N927DM"}'
-python scripts/graph.py query downstream_legs --params '{"flightId": "WN1091"}'
+python scripts/graph.py query aircraft_rotation --params '{"tail": "N925DM"}'
+python scripts/graph.py query downstream_legs --params '{"flightId": "WN3553"}'
 python scripts/graph.py cypher "MATCH (f:Flight)-[:DEPARTS_FROM]->(:Airport {code:'DAL'}) RETURN count(f) AS departures"
 python scripts/graph.py list                  # all named queries and their default params
 ```
@@ -115,49 +115,49 @@ The named queries live in [`functions/graph_api/queries.py`](functions/graph_api
 ## Disruption impact
 
 ```bash
-python scripts/graph.py impact WN1091 --delay 180
-python scripts/graph.py impact WN1091 --delay 180 --json    # full report
+python scripts/graph.py impact WN3553 --delay 180
+python scripts/graph.py impact WN3553 --delay 180 --json    # full report
 ```
 
-Sample output for the generated dataset (seed 42). This was produced by running the impact
-pipeline against the test suite's in-memory version of the queries, so the live cluster's
-results should match:
+Any flight number works; `query hub_connections` lists busy ones. Sample output for the
+generated dataset (seed 42), produced by running the impact pipeline against the test suite's
+in-memory version of the queries:
 
 ```
-WN1091 TPA-DAL (aircraft N927DM) delayed 180 min
+WN3553 PHX-DAL (aircraft N925DM) delayed 180 min
 
-  Flights delayed            10  (aircraft ripple 5, crew-induced 5)
-  Crew pairings affected     4  (duty-limit breaches 1)
-  Misconnected passengers    202  (A-List 17)
+  Flights delayed            9  (aircraft ripple 6, crew-induced 3)
+  Crew pairings affected     5  (duty-limit breaches 2)
+  Misconnected passengers    139  (A-List 13)
 
 Crew pairings
-pairing  flights                               dutyEnd  limit    breach
--------  ------------------------------------  -------  -------  ------
-PR0023   WN1091 > WN2830* > WN1417* > WN4260*  19:10    18:45    True
-PR0004   WN696 > WN4815 > WN3135 > WN2895      16:25    18:00    False
-PR0046   WN4115 > WN4948*                      23:40    01:50+1  False
-PR0066   WN3067 > WN4259*                      01:20+1  05:35+1  False
+pairing  flights                           dutyEnd  limit    breach
+-------  --------------------------------  -------  -------  ------
+PR0020   WN3553 > WN3952 > WN663*          18:45    18:40    True
+PR0029   WN4289 > WN3670 > WN3950 > WN662  21:20    19:05    True
+PR0048   WN526 > WN1828* > WN3341*         22:55    01:35+1  False
+...
   * crew-induced delay (crew arrives late on another aircraft)
 
 Misconnects (first rows)
 inbound  at   outbound  to   pax  newArr  dep    slack
 -------  ---  --------  ---  ---  ------  -----  -----
-WN3067   DAL  WN3532    PHX  24   23:30   21:30  -120
-WN2895   DAL  WN1029    SAT  18   16:10   14:20  -110
-WN2895   DAL  WN1037    MDW  16   16:10   15:35  -35
+WN354    DAL  WN2578    LAX  19   22:50   21:20  -90
+WN354    DAL  WN3298    MCI  11   22:50   21:30  -80
+WN3553   DAL  WN2267    DEN  8    12:00   09:45  -135
 ...
 
 Rebooking options (best 3 by arrival)
-market   notBefore  flights        dep      arr      seats  delayed
--------  ---------  -------------  -------  -------  -----  -------
-DAL-ATL  12:40      WN1490         13:25    15:25    20     False
-DAL-ATL  12:40      WN1690+WN2576  13:05    17:45    36     False
-DAL-BWI  12:40      WN4816         13:20    16:25    40     False
+market   notBefore  flights        dep    arr      seats  delayed
+-------  ---------  -------------  -----  -------  -----  -------
+DAL-ATL  12:30      WN2381         13:00  15:00    21     False
+DAL-ATL  12:30      WN1490         19:35  21:35    25     False
+DAL-ATL  12:30      WN2089         21:05  23:05    46     False
 ...
 ```
 
-Note crew pairing `PR0023`: that crew flies the late WN1091 into DAL and then changes aircraft.
-That makes three flights late that the aircraft ripple never touched, and the crew ends up past
+Note crew pairing `PR0048`: that crew flies the late WN526 into DAL and then changes aircraft,
+making two flights late that the aircraft ripple never touched. Pairing `PR0020` ends up past
 its duty limit.
 
 ### How it works

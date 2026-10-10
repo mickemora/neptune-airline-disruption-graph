@@ -166,7 +166,9 @@ class Generator:
                     options = [c for c in spokes if c != prev_dest] or spokes
                     dest = self.rng.choices(options, [spoke_weights[c] for c in options])[0]
                 else:
-                    p2p = [c for c in self.routes[here] if c != HUB and c != prev_dest]
+                    # sorted(): set order changes between Python processes (hash randomisation),
+                    # which would make the "deterministic" schedule differ per machine.
+                    p2p = [c for c in sorted(self.routes[here]) if c != HUB and c != prev_dest]
                     dest = self.rng.choice(p2p) if p2p and self.rng.random() < 0.3 else HUB
                 dist = great_circle_miles(here, dest)
                 arr = dep + block_minutes(dist)

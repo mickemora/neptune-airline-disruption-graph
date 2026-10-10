@@ -123,9 +123,11 @@ def action_impact(event):
     delay = int(event["delayMin"])
 
     # 1. Aircraft rotation ripple.
-    legs = run(queries.AIRCRAFT_RIPPLE, {"flightId": flight_id})
+    legs = run(queries.FLIGHT_LEG, {"flightId": flight_id})
     if not legs:
-        raise ValueError(f"flight {flight_id} not found")
+        raise ValueError(f"flight {flight_id} not found; try `query hub_connections` "
+                         "or `query aircraft_rotation` to find flight numbers")
+    legs += run(queries.AIRCRAFT_RIPPLE, {"flightId": flight_id})
     delays = impact.propagate_aircraft_delay(legs, delay)
 
     # 2. Crew pairings on any delayed flight (may delay other aircraft).
@@ -150,7 +152,7 @@ def action_impact(event):
                     {"requests": requests, "minConnect": impact.MIN_CONNECT})
         options = impact.best_options(rows, all_delays)
 
-    origin = next(l for l in legs if l["flightId"] == flight_id)
+    origin = legs[0]
     misconnected_pax = sum(m["pax"] for m in misconnects)
     return {
         "disruption": {"flightId": flight_id, "tail": origin["tail"],

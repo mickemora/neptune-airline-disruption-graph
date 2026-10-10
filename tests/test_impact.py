@@ -103,6 +103,19 @@ def test_impact_end_to_end_on_generated_data(dataset, monkeypatch):
     assert all(m["inboundTail"] != m["outboundTail"] for m in report["misconnects"])
 
 
+def test_impact_on_last_leg_and_unknown_flight(dataset, monkeypatch):
+    _, out = dataset
+    graph = FakeGraph(out)
+    monkeypatch.setattr(handler, "run", graph.run)
+    last = max(graph.flights.values(), key=lambda f: (f["schedDepMin"], f["flightId"]))
+    report = handler.action_impact({"flightId": last["flightId"], "delayMin": 60})
+    assert report["disruption"]["flightId"] == last["flightId"]
+    assert report["delayedFlights"][0] == {"flightId": last["flightId"], "delayMin": 60,
+                                           "source": "aircraft"}
+    res = handler.handler({"action": "impact", "flightId": "WN0", "delayMin": 60}, None)
+    assert res["ok"] is False and "not found" in res["error"]
+
+
 def test_handler_rejects_unknown_query():
     res = handler.handler({"action": "query", "name": "nope"}, None)
     assert res["ok"] is False and "unknown query" in res["error"]

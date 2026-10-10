@@ -11,6 +11,22 @@ def test_deterministic():
     assert len(a.bookings) == len(b.bookings)
 
 
+def test_deterministic_across_processes(tmp_path):
+    """Same seed must give the same schedule in a fresh interpreter (hash seed differs)."""
+    import os
+    import subprocess
+    import sys
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    outs = []
+    for hash_seed in ("1", "2"):
+        out = tmp_path / hash_seed
+        subprocess.run([sys.executable, "-m", "datagen.generate", "--out", str(out)],
+                       cwd=root, check=True, capture_output=True,
+                       env={**os.environ, "PYTHONHASHSEED": hash_seed})
+        outs.append((out / "nodes" / "flights.csv").read_text())
+    assert outs[0] == outs[1]
+
+
 def test_rotations_are_continuous(dataset):
     gen, _ = dataset
     for ac in gen.aircraft:
