@@ -7,6 +7,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "functions" / "graph_api"))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 # The handler imports boto3 at module load; stub it if it isn't installed locally.
 try:

@@ -10,6 +10,8 @@ Examples:
   python scripts/graph.py cypher "MATCH (f:Flight {origin:'DAL'}) RETURN count(f) AS n"
   python scripts/graph.py impact WN1234 --delay 180
   python scripts/graph.py impact WN1234 --delay 180 --json   # full raw report
+  python scripts/graph.py visualize impact WN1234 --delay 180  # interactive HTML, opens browser
+  python scripts/graph.py visualize network                    # route map
 
 Uses your default AWS credentials/region (AWS_PROFILE / AWS_REGION are honoured).
 """
@@ -20,9 +22,13 @@ import argparse
 import json
 import sys
 import time
+import webbrowser
+from pathlib import Path
 
 import boto3
 from botocore.config import Config
+
+import visualize
 
 STACK = "NeptuneAirlineDisruptionStack"
 
@@ -139,6 +145,33 @@ def cmd_impact(args) -> None:
         print_table(rows)
 
 
+def cmd_visualize(args) -> None:
+    if args.view == "network":
+        airports = invoke({"action": "cypher", "query": visualize.NETWORK_AIRPORTS})
+        routes = invoke({"action": "cypher", "query": visualize.NETWORK_ROUTES})
+        graph = visualize.build_network_graph(airports, routes)
+        default_name = "network.html"
+    else:
+        if not args.flight_id:
+            sys.exit("usage: graph.py visualize impact FLIGHT_ID [--delay MIN]")
+        report = invoke({"action": "impact", "flightId": args.flight_id,
+                         "delayMin": args.delay})
+        ids = visualize.impact_flight_ids(report)
+        flights = invoke({"action": "cypher", "query": visualize.FLIGHTS_BY_ID,
+                          "params": {"ids": ids}})
+        delayed = {d["flightId"] for d in report["delayedFlights"]}
+        tails = sorted({f["tail"] for f in flights if f["flightId"] in delayed})
+        flights += invoke({"action": "cypher", "query": visualize.FLIGHTS_BY_TAIL,
+                           "params": {"tails": tails}})
+        graph = visualize.build_impact_graph(report, flights)
+        default_name = f"impact-{args.flight_id}-{args.delay}.html"
+    out = Path(args.out or default_name).resolve()
+    out.write_text(visualize.render_html(graph), encoding="utf-8")
+    print(f"Wrote {out}")
+    if not args.no_open:
+        webbrowser.open(out.as_uri())
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Airline disruption graph client")
     sub = p.add_subparsers(required=True)
@@ -158,6 +191,13 @@ def main() -> None:
     i.add_argument("--delay", type=int, default=180)
     i.add_argument("--json", action="store_true")
     i.set_defaults(fn=cmd_impact)
+    v = sub.add_parser("visualize", help="write an interactive HTML view and open it")
+    v.add_argument("view", choices=["impact", "network"])
+    v.add_argument("flight_id", nargs="?")
+    v.add_argument("--delay", type=int, default=180)
+    v.add_argument("--out", help="output HTML path (default: impact-<flight>-<delay>.html)")
+    v.add_argument("--no-open", action="store_true", help="don't open the browser")
+    v.set_defaults(fn=cmd_visualize)
     sub.add_parser("list").set_defaults(
         fn=lambda _a: print(json.dumps(invoke({"action": "list_queries"}), indent=2)))
     sub.add_parser("clear").set_defaults(

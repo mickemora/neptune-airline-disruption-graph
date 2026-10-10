@@ -160,6 +160,26 @@ Note crew pairing `PR0048`: that crew flies the late WN526 into DAL and then cha
 making two flights late that the aircraft ripple never touched. Pairing `PR0020` ends up past
 its duty limit.
 
+### Visualize it
+
+```bash
+python scripts/graph.py visualize impact WN3553 --delay 180   # writes impact-WN3553-180.html and opens it
+python scripts/graph.py visualize network                     # writes network.html: the route map
+```
+
+Each command pulls the relevant part of the graph through the Lambda and writes a single
+interactive HTML page (drag, zoom, hover for details). Nothing extra is deployed.
+
+- **impact**: one row per aircraft in the cascade, flights placed left to right by scheduled
+  departure and coloured by cause (disrupted, same aircraft, crew changed aircraft). Crew
+  pairings link to every leg they work (red ring = duty-limit breach); misconnected passenger
+  groups link each late inbound flight to the onward flight they miss, shown in a band below.
+- **network**: airports placed by real latitude and longitude, sized by daily departures, with
+  the hub's routes highlighted.
+
+Options: `--out <file>` to choose the file name, `--no-open` to skip opening the browser. The page
+loads its drawing library (vis-network) from unpkg.com, so viewing it needs internet access.
+
 ### How it works
 
 1. `AIRCRAFT_RIPPLE` finds the aircraft's remaining legs. `propagate_aircraft_delay` pushes the delay forward, reducing it by any turn time beyond the 35-minute minimum.
@@ -212,5 +232,6 @@ infra/neptune_stack.py       VPC, Neptune Serverless, S3, IAM, Lambda
 functions/graph_api/         Lambda: handler.py, queries.py (openCypher), impact.py (rules)
 datagen/                     Synthetic network, schedule, crew and passenger generator
 scripts/graph.py             CLI that invokes the Lambda
+scripts/visualize.py         Builds the interactive HTML views
 tests/                       pytest suite + in-memory query stand-ins
 ```

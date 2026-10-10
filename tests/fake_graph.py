@@ -11,6 +11,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import queries
+import visualize
 
 
 def _read(path: Path) -> list[dict]:
@@ -39,6 +40,8 @@ class FakeGraph:
         self.flights = {f["flightId"]: f for f in _read(n / "flights.csv")}
         self.crew = {c["crewId"]: c for c in _read(n / "crew.csv")}
         self.pax = {p["passengerId"]: p for p in _read(n / "passengers.csv")}
+        self.airports = {a["code"]: a for a in _read(n / "airports.csv")}
+        self.routes = _read(e / "routes.csv")
         self.assign = _read(e / "assigned_to.csv")
         self.bookings = defaultdict(list)            # passengerId -> [flightId]
         for b in _read(e / "booked_on.csv"):
@@ -127,6 +130,12 @@ class FakeGraph:
                                                       g["seatsAvailable"])})
         return rows
 
+    def _flight_rows(self, keep):
+        return [{"flightId": f["flightId"], "origin": f["origin"], "dest": f["dest"],
+                 "dep": f["schedDepMin"], "arr": f["schedArrMin"], "tail": f["tail"],
+                 "legSeq": f["legSeq"], "seats": f["seatsAvailable"]}
+                for f in self.flights.values() if keep(f)]
+
     def run(self, query, params=None):
         """Drop-in replacement for handler.run, dispatching on query text."""
         params = params or {}
@@ -143,4 +152,20 @@ class FakeGraph:
         if query == queries.REBOOK_ONE_STOP:
             return self.rebook(params["requests"], one_stop=True,
                                minConnect=params["minConnect"])
+        if query == visualize.FLIGHTS_BY_ID:
+            ids = set(params["ids"])
+            return self._flight_rows(lambda f: f["flightId"] in ids)
+        if query == visualize.FLIGHTS_BY_TAIL:
+            tails = set(params["tails"])
+            return self._flight_rows(lambda f: f["tail"] in tails)
+        if query == visualize.NETWORK_AIRPORTS:
+            deps = defaultdict(int)
+            for f in self.flights.values():
+                deps[f["origin"]] += 1
+            return [{"code": a["code"], "city": a["city"], "lat": a["lat"], "lon": a["lon"],
+                     "isHub": a["isHub"] == "true", "departures": deps[a["code"]]}
+                    for a in self.airports.values()]
+        if query == visualize.NETWORK_ROUTES:
+            return [{"a": r["START_ID"][3:], "b": r["END_ID"][3:], "distanceMi": r["distanceMi"]}
+                    for r in self.routes if r["START_ID"][3:] < r["END_ID"][3:]]
         raise NotImplementedError(query)
