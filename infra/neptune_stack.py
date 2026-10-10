@@ -39,8 +39,10 @@ class NeptuneAirlineStack(Stack):
 
         lambda_sg = ec2.SecurityGroup(self, "GraphApiSg", vpc=vpc,
                                       description="Graph API Lambda", allow_all_outbound=True)
+        # Outbound must be open: the bulk loader connects from the cluster to S3 (via the
+        # gateway endpoint). The subnets have no internet route, so S3 is all it can reach.
         neptune_sg = ec2.SecurityGroup(self, "NeptuneSg", vpc=vpc,
-                                       description="Neptune cluster", allow_all_outbound=False)
+                                       description="Neptune cluster", allow_all_outbound=True)
         neptune_sg.add_ingress_rule(lambda_sg, ec2.Port.tcp(8182), "Graph API Lambda")
 
         # ---------------------------------------------------------------- data in S3
@@ -131,6 +133,8 @@ class NeptuneAirlineStack(Stack):
                 "neptune-db:DeleteDataViaQuery",
                 "neptune-db:StartLoaderJob",
                 "neptune-db:GetLoaderJobStatus",
+                "neptune-db:ListLoaderJobs",
+                "neptune-db:GetEngineStatus",
             ],
             resources=[cluster_data_arn],
         ))

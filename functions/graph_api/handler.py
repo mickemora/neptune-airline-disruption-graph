@@ -8,6 +8,7 @@ Event shapes:
   {"action": "cypher", "query": "MATCH (n) RETURN count(n)", "params": {}}
   {"action": "impact", "flightId": "WN1234", "delayMin": 180}
   {"action": "clear"}                                  delete all data (batched)
+  {"action": "diagnose"}                               engine status + recent load jobs
 
 Requests are signed with SigV4 by boto3's `neptunedata` client (IAM auth is on).
 """
@@ -32,7 +33,10 @@ def client():
         endpoint = f'https://{os.environ["NEPTUNE_ENDPOINT"]}:{os.environ["NEPTUNE_PORT"]}'
         _client = boto3.client(
             "neptunedata", endpoint_url=endpoint,
-            config=Config(read_timeout=120, retries={"max_attempts": 3, "mode": "standard"}))
+            # Fail fast: a network problem (security group, endpoint) should surface as an
+            # error in seconds, not hang the function until its 5-minute timeout.
+            config=Config(connect_timeout=5, read_timeout=60,
+                          retries={"total_max_attempts": 2, "mode": "standard"}))
     return _client
 
 
@@ -64,6 +68,34 @@ def action_load_status(event):
     resp = client().get_loader_job_status(loadId=event["loadId"], details=True,
                                           errors=True, errorsPerPage=5)
     return resp["payload"]
+
+
+def action_diagnose(_event):
+    """Separate 'cannot reach Neptune' from 'Neptune cannot reach S3' from 'load failed'."""
+    out = {"endpoint": os.environ["NEPTUNE_ENDPOINT"], "dataS3Uri": os.environ["DATA_S3_URI"]}
+    try:
+        status = client().get_engine_status()
+        out["engine"] = {k: status.get(k) for k in ("status", "dbEngineVersion", "role")}
+    except Exception as exc:
+        out["engine"] = f"UNREACHABLE: {type(exc).__name__}: {exc}"
+        return out
+    try:
+        ids = client().list_loader_jobs(limit=10)["payload"].get("loadIds", [])
+        jobs = []
+        for load_id in ids:
+            overall = client().get_loader_job_status(loadId=load_id)["payload"]["overallStatus"]
+            jobs.append({"loadId": load_id, "status": overall.get("status"),
+                         "records": overall.get("totalRecords"),
+                         "insertErrors": overall.get("insertErrors"),
+                         "parsingErrors": overall.get("parsingErrors")})
+        out["loadJobs"] = jobs
+    except Exception as exc:
+        out["loadJobs"] = f"ERROR: {type(exc).__name__}: {exc}"
+    try:
+        out["nodeCount"] = run("MATCH (n) RETURN count(n) AS n")[0]["n"]
+    except Exception as exc:
+        out["nodeCount"] = f"ERROR: {type(exc).__name__}: {exc}"
+    return out
 
 
 def action_list_queries(_event):
@@ -155,6 +187,7 @@ def action_clear(_event):
 ACTIONS = {
     "load": action_load,
     "load_status": action_load_status,
+    "diagnose": action_diagnose,
     "list_queries": action_list_queries,
     "query": action_query,
     "cypher": action_cypher,

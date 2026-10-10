@@ -2,6 +2,7 @@
 """Command-line client for the deployed graph API Lambda.
 
 Examples:
+  python scripts/graph.py diagnose                # can the Lambda reach Neptune? any load jobs?
   python scripts/graph.py load                    # start bulk load, then poll until done
   python scripts/graph.py query summary
   python scripts/graph.py query hub_connections --params '{"limit": 5}'
@@ -21,6 +22,7 @@ import sys
 import time
 
 import boto3
+from botocore.config import Config
 
 STACK = "NeptuneAirlineDisruptionStack"
 
@@ -31,8 +33,11 @@ def function_name() -> str:
 
 
 def invoke(payload: dict) -> object:
-    resp = boto3.client("lambda").invoke(FunctionName=function_name(),
-                                         Payload=json.dumps(payload).encode())
+    # Wait as long as the function may run (5 min) and never retry: a retried invoke
+    # would run the action again (e.g. start a second bulk load).
+    lam = boto3.client("lambda", config=Config(read_timeout=330, connect_timeout=10,
+                                               retries={"total_max_attempts": 1}))
+    resp = lam.invoke(FunctionName=function_name(), Payload=json.dumps(payload).encode())
     body = json.loads(resp["Payload"].read())
     if "FunctionError" in resp or not body.get("ok", False):
         sys.exit(f"error: {body.get('error') or body}")
@@ -138,6 +143,8 @@ def main() -> None:
     p = argparse.ArgumentParser(description="Airline disruption graph client")
     sub = p.add_subparsers(required=True)
     sub.add_parser("load").set_defaults(fn=cmd_load)
+    sub.add_parser("diagnose").set_defaults(
+        fn=lambda _a: print(json.dumps(invoke({"action": "diagnose"}), indent=2)))
     q = sub.add_parser("query")
     q.add_argument("name")
     q.add_argument("--params", default="{}")

@@ -181,6 +181,12 @@ pytest -q
 
 CI (`.github/workflows/ci.yml`) runs the tests and `cdk synth` on every push.
 
+## Troubleshooting
+
+- **A command hangs or times out:** run `python scripts/graph.py diagnose`. It shows whether the Lambda can reach Neptune, lists recent bulk-load jobs with their status, and counts loaded nodes.
+- **Engine version not offered in your region:** `aws neptune describe-db-engine-versions --engine neptune --query "DBEngineVersions[].EngineVersion"`, then `cdk deploy -c neptuneEngineVersion=<version>`.
+- **Access denied right after a deploy:** IAM changes can take a few minutes to apply; retry.
+
 ## Simplifications
 
 - One service day. Times are hub-local, with no time-zone conversion.
