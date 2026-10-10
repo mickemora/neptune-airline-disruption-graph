@@ -97,7 +97,7 @@ def test_runtime_zip_layout(tmp_path, monkeypatch):
     path = build.build_zip()
     with zipfile.ZipFile(path) as zf:
         names = set(zf.namelist())
-        assert {"main.py", "agent/__init__.py", "agent/prompt.py",
+        assert {"main.py", "agent/__init__.py", "agent/prompt.py", "agent/turns.py",
                 "strands/__init__.py", "lib/fast.so"} <= names
         assert not any("__pycache__" in n for n in names)
         assert "agent/chat.py" not in names
@@ -123,6 +123,24 @@ def test_runtime_app_imports_and_tracks_tools(monkeypatch):
         {"role": "assistant", "content": [{"text": "x"},
                                           {"toolUse": {"name": "graph___analyze_disruption"}}]},
     ]
-    assert runtime_app._tools_used(messages, 2) == ["analyze_disruption"]
+    assert runtime_app.tools_used(messages, 2) == ["analyze_disruption"]
     assert runtime_app.invoke({}, types.SimpleNamespace(session_id="s"))["error"]
     os.environ.pop("GATEWAY_URL", None)
+
+
+def test_turn_helpers():
+    from agent.turns import analyses, tools_used
+    messages = [
+        {"role": "assistant", "content": [{"toolUse": {
+            "name": "analyze_disruption", "input": {"flight_id": "wn1", "delay_minutes": 30}}}]},
+        {"role": "user", "content": [{"text": "next"}]},
+        {"role": "assistant", "content": [
+            {"toolUse": {"name": "graph___get_flight", "input": {"flight_id": "WN2"}}},
+            {"toolUse": {"name": "graph___analyze_disruption",
+                         "input": {"flight_id": "wn2", "delay_minutes": "90"}}},
+            {"toolUse": {"name": "graph___analyze_disruption", "input": {"flight_id": "WN3"}}}]},
+    ]
+    assert tools_used(messages, 0) == ["analyze_disruption", "get_flight",
+                                       "analyze_disruption", "analyze_disruption"]
+    assert analyses(messages, 1) == [{"flightId": "WN2", "delayMin": 90}]   # bad call skipped
+    assert analyses(messages, 0)[0] == {"flightId": "WN1", "delayMin": 30}

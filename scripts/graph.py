@@ -154,16 +154,7 @@ def cmd_visualize(args) -> None:
     else:
         if not args.flight_id:
             sys.exit("usage: graph.py visualize impact FLIGHT_ID [--delay MIN]")
-        report = invoke({"action": "impact", "flightId": args.flight_id,
-                         "delayMin": args.delay})
-        ids = visualize.impact_flight_ids(report)
-        flights = invoke({"action": "cypher", "query": visualize.FLIGHTS_BY_ID,
-                          "params": {"ids": ids}})
-        delayed = {d["flightId"] for d in report["delayedFlights"]}
-        tails = sorted({f["tail"] for f in flights if f["flightId"] in delayed})
-        flights += invoke({"action": "cypher", "query": visualize.FLIGHTS_BY_TAIL,
-                           "params": {"tails": tails}})
-        graph = visualize.build_impact_graph(report, flights)
+        _, graph = visualize.fetch_impact(invoke, args.flight_id, args.delay)
         default_name = f"impact-{args.flight_id}-{args.delay}.html"
     out = Path(args.out or default_name).resolve()
     out.write_text(visualize.render_html(graph), encoding="utf-8")

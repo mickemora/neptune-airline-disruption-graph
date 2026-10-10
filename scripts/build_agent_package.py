@@ -31,7 +31,7 @@ DEPS = BUILD / "agent_deps"
 ZIP_PATH = BUILD / "agent_runtime.zip"
 PYTHON_VERSION = "3.13"
 # Agent modules the runtime needs (chat.py/tools.py are local-only; they stay out).
-AGENT_FILES = ["__init__.py", "prompt.py"]
+AGENT_FILES = ["__init__.py", "prompt.py", "turns.py"]
 
 
 def _requirements_hash() -> str:

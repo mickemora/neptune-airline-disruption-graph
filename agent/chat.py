@@ -30,7 +30,9 @@ EXAMPLES = [
 ]
 
 
-def build_agent():
+def build_agent(callback_handler="default"):
+    """Local agent. The default handler streams text and tool calls to the terminal;
+    pass callback_handler=None for silent use (e.g. the web UI)."""
     from strands import Agent
     from strands.models import BedrockModel
 
@@ -41,7 +43,8 @@ def build_agent():
     if os.getenv("AGENT_MODEL_ID"):
         config["model_id"] = os.environ["AGENT_MODEL_ID"]
     model = BedrockModel(region_name=os.getenv("AWS_REGION") or None, **config)
-    return Agent(model=model, tools=ALL_TOOLS, system_prompt=SYSTEM_PROMPT)
+    extra = {} if callback_handler == "default" else {"callback_handler": callback_handler}
+    return Agent(model=model, tools=ALL_TOOLS, system_prompt=SYSTEM_PROMPT, **extra)
 
 
 class RemoteAgent:
@@ -57,12 +60,16 @@ class RemoteAgent:
             read_timeout=600, connect_timeout=10, retries={"total_max_attempts": 1}))
         self.session_id = f"noc-chat-{uuid.uuid4().hex}"       # 41 chars (33+ required)
 
-    def __call__(self, question: str) -> None:
+    def ask(self, question: str) -> dict:
+        """One turn: {"result", "toolsUsed", "analyses", "sessionId"} or {"error"}."""
         resp = self.client.invoke_agent_runtime(
             agentRuntimeArn=self.arn, runtimeSessionId=self.session_id,
             contentType="application/json", accept="application/json",
             payload=json.dumps({"prompt": question}).encode())
-        body = json.loads(resp["response"].read())
+        return json.loads(resp["response"].read())
+
+    def __call__(self, question: str) -> None:
+        body = self.ask(question)
         if "error" in body:
             print(f"[agent error] {body['error']}")
             return

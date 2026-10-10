@@ -6,7 +6,8 @@ Same agent and instructions as agent/chat.py, but:
     controller can ask follow-ups across invocations.
 
 Request:  {"prompt": "..."}                (session comes from the runtime session ID)
-Response: {"result": "...", "toolsUsed": ["analyze_disruption", ...], "sessionId": "..."}
+Response: {"result": "...", "toolsUsed": ["analyze_disruption", ...],
+           "analyses": [{"flightId": "WN3553", "delayMin": 180}, ...], "sessionId": "..."}
 
 Environment (set by infra/agentcore_stack.py): GATEWAY_URL, MEMORY_ID, AGENT_REGION,
 optional AGENT_MODEL_ID.
@@ -24,6 +25,7 @@ from strands.models import BedrockModel
 from strands.tools.mcp.mcp_client import MCPClient
 
 from agent.prompt import SYSTEM_PROMPT
+from agent.turns import analyses, tools_used
 
 log = logging.getLogger("airline-ops-agent")
 logging.basicConfig(level=logging.INFO)
@@ -53,16 +55,6 @@ def _session_manager(session_id: str):
     return AgentCoreMemorySessionManager(agentcore_memory_config=config, region_name=REGION)
 
 
-def _tools_used(messages: list, start: int) -> list[str]:
-    """Names of tools called during this turn, gateway prefix removed, in order."""
-    names = []
-    for message in messages[start:]:
-        for block in message.get("content", []):
-            if "toolUse" in block:
-                names.append(block["toolUse"]["name"].split("___")[-1])
-    return names
-
-
 @app.entrypoint
 def invoke(payload, context):
     prompt = (payload or {}).get("prompt")
@@ -84,9 +76,11 @@ def invoke(payload, context):
         )
         start = len(agent.messages)          # history restored from memory comes first
         result = agent(prompt)
-        tools = _tools_used(agent.messages, start)
+        tools = tools_used(agent.messages, start)
+        simulated = analyses(agent.messages, start)
     log.info("session=%s tools=%s", session_id, tools)
-    return {"result": str(result), "toolsUsed": tools, "sessionId": session_id}
+    return {"result": str(result), "toolsUsed": tools, "analyses": simulated,
+            "sessionId": session_id}
 
 
 if __name__ == "__main__":

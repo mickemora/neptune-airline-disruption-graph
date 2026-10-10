@@ -243,6 +243,19 @@ def build_impact_graph(report: dict, flights: list[dict]) -> dict:
     }
 
 
+def fetch_impact(invoke, flight_id: str, delay_min: int) -> tuple[dict, dict]:
+    """Run the impact analysis and fetch what the drawing needs, through `invoke`
+    (a function taking a graph-API payload and returning its result). Returns
+    (impact report, graph for render_html)."""
+    report = invoke({"action": "impact", "flightId": flight_id, "delayMin": int(delay_min)})
+    ids = impact_flight_ids(report)
+    flights = invoke({"action": "cypher", "query": FLIGHTS_BY_ID, "params": {"ids": ids}})
+    delayed = {d["flightId"] for d in report["delayedFlights"]}
+    tails = sorted({f["tail"] for f in flights if f["flightId"] in delayed})
+    flights += invoke({"action": "cypher", "query": FLIGHTS_BY_TAIL, "params": {"tails": tails}})
+    return report, build_impact_graph(report, flights)
+
+
 # --------------------------------------------------------------------------- network view
 
 def build_network_graph(airports: list[dict], routes: list[dict]) -> dict:
@@ -294,7 +307,9 @@ def build_network_graph(airports: list[dict], routes: list[dict]) -> dict:
 VIS_URL = "https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"
 
 
-def render_html(graph: dict) -> str:
+def render_html(graph: dict, embed: bool = False) -> str:
+    """Standalone page, or with embed=True just the legend and the drawing (for the web UI,
+    which shows the title and numbers itself)."""
     data = json.dumps({"nodes": graph["nodes"], "edges": graph["edges"],
                        "physics": graph["physics"]}).replace("</", "<\\/")
     stats = "".join(f'<div class="stat"><b>{html.escape(str(v))}</b>'
@@ -303,6 +318,10 @@ def render_html(graph: dict) -> str:
         (f'<span class="key"><i class="dash"></i>{html.escape(t)}</span>' if c == "dash" else
          f'<span class="key"><i style="background:{c}"></i>{html.escape(t)}</span>')
         for c, t in graph["legend"])
+    header = (f'<header class="embed"><div class="legend">{legend}</div></header>' if embed else
+              f'<header><h1>{html.escape(graph["title"])}</h1>'
+              f'<p>{html.escape(graph["subtitle"])}</p>'
+              f'<div class="stats">{stats}</div><div class="legend">{legend}</div></header>')
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -317,6 +336,8 @@ def render_html(graph: dict) -> str:
          font-family:"IBM Plex Sans","Helvetica Neue",Helvetica,sans-serif;
          display:flex; flex-direction:column; height:100vh; }}
   header {{ padding:20px 28px 12px; border-top:6px solid var(--navy); }}
+  header.embed {{ padding:6px 8px 8px; border-top:0; }}
+  header.embed .legend {{ margin-top:0; font-size:12px; }}
   h1 {{ margin:0 0 4px; font-size:24px; color:var(--navy); }}
   p {{ margin:0; color:var(--muted); font-size:14px; }}
   .stats {{ display:flex; flex-wrap:wrap; gap:28px; margin-top:14px; }}
@@ -331,12 +352,7 @@ def render_html(graph: dict) -> str:
 </style>
 </head>
 <body>
-<header>
-  <h1>{html.escape(graph["title"])}</h1>
-  <p>{html.escape(graph["subtitle"])}</p>
-  <div class="stats">{stats}</div>
-  <div class="legend">{legend}</div>
-</header>
+{header}
 <div id="err">Could not load the drawing library from unpkg.com. Check your internet connection.</div>
 <div id="graph"></div>
 <script>
