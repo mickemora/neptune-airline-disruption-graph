@@ -17,7 +17,7 @@ The solution also offers interactive HTML visualizations, an optional Neptune Gr
 ![The Disruption Ops Assistant analyzing a two-hour delay on WN4608 (impact summary, prioritized missed connections and rebooking options), and Graph Explorer showing a flight's passengers and the route network around Austin](docs/images/collage.png)
 
 > All schedule, fleet, crew and passenger data is synthetic. Only the airport codes and
-> coordinates are real. This project is not affiliated with Southwest Airlines.
+> coordinates are real. This project is not affiliated with an specific airline.
 
 ## Why a graph?
 
