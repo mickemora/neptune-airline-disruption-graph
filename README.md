@@ -205,6 +205,44 @@ interactive HTML page (drag, zoom, hover for details). Nothing extra is deployed
 Options: `--out <file>` to choose the file name, `--no-open` to skip opening the browser. The page
 loads its drawing library (vis-network) from unpkg.com, so viewing it needs internet access.
 
+### Ask the AI agent
+
+An operations assistant built with [Strands Agents](https://strandsagents.com) and Claude on
+Amazon Bedrock. Describe a disruption in plain English; it calls read-only tools backed by the
+graph API Lambda, reasons across the results and recommends what to do. Nothing new is
+deployed: it runs on your laptop.
+
+```bash
+pip install -r requirements-agent.txt     # already included in requirements-dev.txt
+python -m agent.chat                      # interactive; follow-up questions keep context
+python -m agent.chat --ask "WN3553 is going to be 3 hours late. What should I do first?"
+```
+
+Good questions to try:
+
+- "WN3553 is going to be 3 hours late. What's the damage and what should I do first?"
+- "How late can WN3553 get before any passenger misconnects?" (it runs several scenarios)
+- "Which connections through DAL carry the most passengers?"
+- "Find afternoon flights from DAL to LAS with open seats."
+
+| Tool | What it does |
+|---|---|
+| `analyze_disruption` | Full cascade for a flight and delay: flights, crews, duty breaches, misconnects, rebooking |
+| `get_flight` / `get_aircraft_day` | One flight's details and crew / one aircraft's whole day |
+| `find_flights` | Schedule search by airports and departure window (fixed query template) |
+| `find_rebooking` | Direct and one-stop options with open seats, ranked by arrival |
+| `busiest_connections` | Connecting-passenger hot spots at a hub |
+
+Guardrails: the tools are read-only (no load, clear or free-form queries); the system prompt
+requires every number to come from a tool result; the agent recommends and the controller
+decides. The tool logic lives in `agent/actions.py` and is unit-tested against the in-memory
+graph; `agent/tools.py` wraps it for the agent and `agent/prompt.py` holds its instructions.
+
+Model: the SDK's default Claude model on Bedrock (Claude Sonnet 4.6 at the time of writing).
+Use another model or inference profile with `export AGENT_MODEL_ID=<id>`. Your AWS identity
+needs `bedrock:InvokeModel*` and `lambda:InvokeFunction`. If Bedrock answers "access denied",
+open the Bedrock console's model catalog once and complete Anthropic's first-use form.
+
 ### How it works
 
 1. `AIRCRAFT_RIPPLE` finds the aircraft's remaining legs. `propagate_aircraft_delay` pushes the delay forward, reducing it by any turn time beyond the 35-minute minimum.
@@ -258,5 +296,6 @@ functions/graph_api/         Lambda: handler.py, queries.py (openCypher), impact
 datagen/                     Synthetic network, schedule, crew and passenger generator
 scripts/graph.py             CLI that invokes the Lambda
 scripts/visualize.py         Builds the interactive HTML views
+agent/                       AI operations agent (Strands + Bedrock): tools, prompt, chat CLI
 tests/                       pytest suite + in-memory query stand-ins
 ```

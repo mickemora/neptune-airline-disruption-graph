@@ -152,6 +152,35 @@ class FakeGraph:
         if query == queries.REBOOK_ONE_STOP:
             return self.rebook(params["requests"], one_stop=True,
                                minConnect=params["minConnect"])
+        if query == queries.FLIGHT:
+            f = self.flights.get(params["flightId"])
+            if f is None:
+                return []
+            crew = [f"{self.crew[a['START_ID'][3:]]['name']} ({self.crew[a['START_ID'][3:]]['role']})"
+                    for a in self.assign if a["END_ID"][3:] == f["flightId"]]
+            return [{"flight": dict(f), "crew": crew}]
+        if query == queries.AIRCRAFT_ROTATION:
+            legs = sorted((f for f in self.flights.values() if f["tail"] == params["tail"]),
+                          key=lambda f: f["legSeq"])
+            return [{"leg": f["legSeq"], "flightId": f["flightId"], "origin": f["origin"],
+                     "dest": f["dest"], "dep": f["schedDep"], "arr": f["schedArr"]} for f in legs]
+        if query == queries.HUB_CONNECTIONS:
+            hub = params["hub"]
+            ids = [fid for fid, f in self.flights.items() if f["dest"] == hub]
+            rows = [{"inbound": r["inbound"], "fromAirport": self.flights[r["inbound"]]["origin"],
+                     "outbound": r["outbound"], "toAirport": r["finalDest"],
+                     "connectMin": r["outboundDep"] - r["inboundArr"], "pax": r["pax"]}
+                    for r in self.connections(ids)]
+            return sorted(rows, key=lambda r: -r["pax"])[:params["limit"]]
+        if query.startswith("MATCH (f:Flight) WHERE f.schedDepMin >= $after"):
+            rows = [f for f in self.flights.values()
+                    if params["after"] <= f["schedDepMin"] <= params["before"]
+                    and f["origin"] == params.get("origin", f["origin"])
+                    and f["dest"] == params.get("dest", f["dest"])]
+            rows.sort(key=lambda f: f["schedDepMin"])
+            return [{"flightId": f["flightId"], "origin": f["origin"], "dest": f["dest"],
+                     "departs": f["schedDep"], "arrives": f["schedArr"], "aircraft": f["tail"],
+                     "openSeats": f["seatsAvailable"]} for f in rows[:25]]
         if query == visualize.FLIGHTS_BY_ID:
             ids = set(params["ids"])
             return self._flight_rows(lambda f: f["flightId"] in ids)
