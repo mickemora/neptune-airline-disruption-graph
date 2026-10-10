@@ -21,5 +21,24 @@ jobs:
           npm install -g aws-cdk
       - name: Unit tests
         run: pytest -q
+      - name: Agent SDK tests must run, not skip
+        run: |
+          pytest -q -rs tests/test_agent.py tests/test_agentcore.py | tee /tmp/agent-tests.txt
+          ! grep -q SKIP /tmp/agent-tests.txt
       - name: CDK synth (environment-agnostic, no AWS credentials needed)
         run: cdk synth --quiet
+      - name: AgentCore code package is complete (Linux arm64)
+        run: |
+          python - <<'PY'
+          import zipfile
+          z = zipfile.ZipFile("build/agent_runtime.zip")
+          names = z.namelist()
+          for required in ("main.py", "agent/prompt.py"):
+              assert required in names, required
+          for pkg in ("strands/", "bedrock_agentcore/", "mcp_proxy_for_aws/", "mcp/"):
+              assert any(n.startswith(pkg) for n in names), pkg
+          arm = [n for n in names if n.endswith(".so") and "aarch64" in n]
+          x86 = [n for n in names if n.endswith(".so") and "x86_64" in n]
+          assert arm and not x86, (len(arm), x86[:3])
+          print(len(names), "files, arm64 native libs:", len(arm))
+          PY
