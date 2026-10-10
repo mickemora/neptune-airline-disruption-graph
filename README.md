@@ -1,7 +1,7 @@
 # Airline Disruption Impact Graph on Amazon Neptune Serverless
 
 When one flight runs late, what else breaks? This project answers that with a graph:
-a synthetic one-day schedule for a Southwest-style network hubbed at **Dallas Love Field (DAL)**,
+a synthetic one-day schedule for an airline network hubbed at **Dallas Love Field (DAL)**,
 loaded into **Amazon Neptune Serverless** and queried with **openCypher**. Everything is
 deployed with the **AWS CDK (Python)**.
 
