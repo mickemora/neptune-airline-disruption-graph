@@ -147,6 +147,7 @@ class NeptuneAirlineStack(Stack):
         self.writer = writer
         self.cluster_data_arn = cluster_data_arn
         self.loader_role = loader_role
+        self.graph_api_fn = fn
 
         # ---------------------------------------------------------------- outputs
         CfnOutput(self, "GraphApiFunctionName", value=fn.function_name)

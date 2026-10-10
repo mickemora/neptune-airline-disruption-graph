@@ -9,6 +9,7 @@ Everything is read-only: the agent can analyse and look things up, never load or
 from __future__ import annotations
 
 import json
+import os
 from functools import lru_cache
 
 STACK = "NeptuneAirlineDisruptionStack"
@@ -25,8 +26,12 @@ class GraphError(RuntimeError):
 def _lambda_and_name():
     import boto3
     from botocore.config import Config
-    outputs = boto3.client("cloudformation").describe_stacks(StackName=STACK)["Stacks"][0]["Outputs"]
-    name = next(o["OutputValue"] for o in outputs if o["OutputKey"] == "GraphApiFunctionName")
+    # In AWS (the gateway tools Lambda) the function name is injected; locally it is looked up.
+    name = os.getenv("GRAPH_API_FUNCTION")
+    if not name:
+        outputs = boto3.client("cloudformation").describe_stacks(
+            StackName=STACK)["Stacks"][0]["Outputs"]
+        name = next(o["OutputValue"] for o in outputs if o["OutputKey"] == "GraphApiFunctionName")
     client = boto3.client("lambda", config=Config(read_timeout=330, connect_timeout=10,
                                                   retries={"total_max_attempts": 1}))
     return client, name
