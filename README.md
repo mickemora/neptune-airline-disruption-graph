@@ -14,6 +14,8 @@ Give it a flight and a delay—through the CLI or a read-only AI operations assi
 
 The solution also offers interactive HTML visualizations, an optional Neptune Graph Explorer notebook, and a Strands-based AI assistant that runs locally or on Amazon Bedrock AgentCore (Runtime, Gateway, and Memory).
 
+![The Disruption Ops Assistant analyzing a two-hour delay on WN4608 (impact summary, prioritized missed connections and rebooking options), and Graph Explorer showing a flight's passengers and the route network around Austin](docs/images/collage.png)
+
 > All schedule, fleet, crew and passenger data is synthetic. Only the airport codes and
 > coordinates are real. This project is not affiliated with Southwest Airlines.
 
