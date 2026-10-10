@@ -5,12 +5,14 @@ a synthetic one-day schedule for a Southwest-style network hubbed at **Dallas Lo
 loaded into **Amazon Neptune Serverless** and queried with **openCypher**. Everything is
 deployed with the **AWS CDK (Python)**.
 
-Give it a flight and a delay, and it returns:
+Give it a flight and a delay—through the CLI or a read-only AI operations assistant—and it returns:
 
 1. **Aircraft ripple**: later legs flown by the same aircraft, with the delay reduced by any spare turn time
 2. **Crew impact**: crews who change aircraft and carry the delay onto *other* tails, plus duty-limit breaches
 3. **Misconnected passengers**: booked connections that no longer meet minimum connect time
 4. **Rebooking options**: direct and one-stop alternatives with open seats, ranked by arrival
+
+The solution also offers interactive HTML visualizations, an optional Neptune Graph Explorer notebook, and a Strands-based AI assistant that runs locally or on Amazon Bedrock AgentCore (Runtime, Gateway, and Memory).
 
 > All schedule, fleet, crew and passenger data is synthetic. Only the airport codes and
 > coordinates are real. This project is not affiliated with Southwest Airlines.
@@ -23,6 +25,8 @@ is a chain of recursive self-joins. Here each is a short `MATCH` pattern, and th
 be combined (a crew-induced delay creates new misconnects) without remodelling anything.
 
 ## Architecture
+
+The deployment separates the core graph, optional visualization notebook, and optional hosted AI assistant into independent CDK stacks. The local CLI and AI assistant use read-only graph actions for analysis; the hosted assistant exposes six approved tools through an IAM-protected MCP gateway.
 
 ```mermaid
 flowchart LR
@@ -311,6 +315,8 @@ pytest -q
 
 - `tests/test_datagen.py` checks the generated schedule: rotations are continuous, turns meet the minimum, every flight is crewed exactly once within duty limits, no flight is overbooked, connections are legal, and every edge points at an existing node.
 - `tests/test_impact.py` unit-tests the delay, crew, misconnect and rebooking rules, then runs the full `impact` action end to end against `tests/fake_graph.py` (in-memory versions of each query).
+- `tests/test_visualize.py` validates graph visualization data generation.
+- The agent tool implementations and hosted tool schemas are tested independently of live AWS resources.
 
 CI (`.github/workflows/ci.yml`) runs the tests and `cdk synth` on every push.
 
@@ -326,7 +332,7 @@ CI (`.github/workflows/ci.yml`) runs the tests and `cdk synth` on every push.
 - Duty limits are a flat 13-hour flight duty period from report time, not the full FAA Part 117 tables.
 - Crew-induced delays are reported in a single pass. They aren't fed back into further aircraft or crew propagation.
 - Rebooking checks seat counts but doesn't reserve seats, so two misconnect groups can be offered the same seats.
-- There are no cancellations, spare aircraft or reserve crews yet. These are natural next steps, along with a Neptune graph notebook and a Bedrock agent that calls the `impact` action as a tool.
+- There are no cancellations, spare aircraft or reserve crews yet. These are potential future enhancements; the Neptune Graph Explorer notebook and Bedrock-powered agent are already implemented.
 
 ## Teardown
 
