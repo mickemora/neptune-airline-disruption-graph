@@ -1,23 +1,27 @@
-"""Synthesise the CDK stack and check the template. Skipped where aws-cdk-lib is absent."""
+"""Synthesise the CDK stacks and check the templates. Skipped where aws-cdk-lib is absent."""
+
+import json
 
 import pytest
 
 cdk = pytest.importorskip("aws_cdk")
 from aws_cdk.assertions import Match, Template  # noqa: E402
 
-from infra.neptune_stack import NOTEBOOK_NAME, NeptuneAirlineStack  # noqa: E402
+from infra.graph_explorer_stack import NOTEBOOK_NAME, GraphExplorerStack  # noqa: E402
+from infra.neptune_stack import NeptuneAirlineStack  # noqa: E402
 
 
-def _template(dataset, **kwargs):
+def _stacks(dataset):
     _, data_dir = dataset
     app = cdk.App()
-    stack = NeptuneAirlineStack(app, "Test", data_dir=data_dir, engine_version="1.4.7.1",
-                                min_ncu=1, max_ncu=8, **kwargs)
-    return Template.from_stack(stack)
+    core = NeptuneAirlineStack(app, "Core", data_dir=data_dir, engine_version="1.4.7.1",
+                               min_ncu=1, max_ncu=8)
+    explorer = GraphExplorerStack(app, "Explorer", core=core)
+    return Template.from_stack(core), Template.from_stack(explorer)
 
 
 def test_core_resources(dataset):
-    t = _template(dataset, graph_explorer=False)
+    t, _ = _stacks(dataset)
     t.resource_count_is("AWS::Neptune::DBCluster", 1)
     t.has_resource_properties("AWS::Neptune::DBCluster", {
         "IamAuthEnabled": True, "StorageEncrypted": True,
@@ -27,10 +31,10 @@ def test_core_resources(dataset):
 
 
 def test_graph_explorer_notebook(dataset):
-    t = _template(dataset, graph_explorer=True)
+    _, t = _stacks(dataset)
     t.has_resource_properties("AWS::SageMaker::NotebookInstance", {
         "NotebookInstanceName": NOTEBOOK_NAME,
-        "PlatformIdentifier": "notebook-al2-v3",
+        "PlatformIdentifier": "notebook-al2023-v1",
         "DirectInternetAccess": "Enabled",
         "Tags": Match.array_with([Match.object_like({"Key": "aws-neptune-cluster-id"}),
                                   Match.object_like({"Key": "aws-neptune-resource-id"})]),
@@ -40,3 +44,6 @@ def test_graph_explorer_notebook(dataset):
     # Neptune accepts the notebook on 8182
     t.has_resource_properties("AWS::EC2::SecurityGroupIngress", {
         "FromPort": 8182, "ToPort": 8182, "Description": "Workbench notebook"})
+    # the start script picks the installer the package ships
+    script = json.dumps(t.find_resources("AWS::SageMaker::NotebookInstanceLifecycleConfig"))
+    assert "install_jl4x.sh" in script and "al2023" in script

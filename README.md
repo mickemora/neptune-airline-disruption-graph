@@ -45,7 +45,7 @@ flowchart LR
 | Neptune Serverless cluster | 1 writer instance, `db.serverless`, 1–8 NCU by default, IAM auth, encrypted |
 | S3 bucket + `BucketDeployment` | Uploads the generated CSVs at deploy time |
 | Loader IAM role | Associated with the cluster; read-only on the bucket |
-| Neptune workbench notebook (optional, on by default) | Jupyter with graph-notebook and **Graph Explorer**, connected to the cluster with IAM auth. It has an interface in the isolated subnet to reach Neptune, and SageMaker-provided internet access to install its software. |
+| Neptune workbench notebook (separate optional stack, on by default) | Jupyter with graph-notebook and **Graph Explorer**, connected to the cluster with IAM auth. It has an interface in the isolated subnet to reach Neptune, and SageMaker-provided internet access to install its software. |
 | Graph API Lambda | The only path into the cluster. Runs bulk loads, named queries, ad-hoc Cypher and the impact analysis. Uses boto3's `neptunedata` client, which signs requests with SigV4. |
 
 ## Graph model
@@ -79,7 +79,7 @@ are point-to-point routes between focus cities.
 
 **Cost note:** Neptune Serverless has a floor of **1 NCU** and does not scale to zero, so the
 cluster bills every hour it exists, even when idle. See the
-[Neptune pricing page](https://aws.amazon.com/neptune/pricing/) and run `cdk destroy` when you're done.
+[Neptune pricing page](https://aws.amazon.com/neptune/pricing/) and run `cdk destroy --all` when you're done.
 
 Prerequisites: AWS credentials, Python 3.11+, Node 18+ and the CDK CLI (`npm i -g aws-cdk`).
 
@@ -89,14 +89,14 @@ pip install -r requirements-dev.txt
 
 python -m datagen.generate          # optional: app.py generates the data if it's missing
 cdk bootstrap                       # once per account/region
-cdk deploy                          # ~15-20 min, mostly the Neptune cluster
+cdk deploy --all                    # ~15-20 min, mostly the Neptune cluster
 ```
 
 Optional context overrides:
 
 ```bash
-cdk deploy -c neptuneEngineVersion=1.4.7.1 -c minNcu=1 -c maxNcu=16
-cdk deploy -c graphExplorer=false     # skip the Graph Explorer notebook
+cdk deploy --all -c neptuneEngineVersion=1.4.7.1 -c minNcu=1 -c maxNcu=16
+cdk deploy -c graphExplorer=false     # core stack only, no Graph Explorer notebook
 ```
 
 ## Load and explore
@@ -166,7 +166,9 @@ its duty limit.
 
 The stack includes a Neptune workbench notebook (`aws-neptune-airline-disruption`, an
 ml.t3.medium) with [Graph Explorer](https://docs.aws.amazon.com/neptune/latest/userguide/visualization-graph-explorer.html)
-already connected to the cluster. After `cdk deploy`, wait until the notebook's status is
+already connected to the cluster. It lives in its own stack, `NeptuneAirlineGraphExplorerStack`,
+so if it ever fails to create, only the notebook rolls back and the cluster stays up.
+After `cdk deploy --all`, wait until the notebook's status is
 **InService** (its first start installs the software and takes several minutes), then:
 
 1. Open the **Neptune console**, choose **Notebooks**, and select `aws-neptune-airline-disruption`.
@@ -179,7 +181,9 @@ The same notebook also offers **Open JupyterLab**, with Neptune's starter notebo
 
 The notebook bills about $0.05 an hour while it is running (us-east-1). Stop it from the console
 when you're not using it, or deploy with `-c graphExplorer=false` to leave it out.
-`cdk destroy` removes it with the rest of the stack.
+`cdk destroy --all` removes it with the rest. If the notebook fails to start, its setup log is in
+CloudWatch: log group `/aws/sagemaker/NotebookInstances`, stream
+`aws-neptune-airline-disruption/LifecycleConfigOnStart`.
 
 ### Visualize it
 
@@ -225,7 +229,7 @@ CI (`.github/workflows/ci.yml`) runs the tests and `cdk synth` on every push.
 ## Troubleshooting
 
 - **A command hangs or times out:** run `python scripts/graph.py diagnose`. It shows whether the Lambda can reach Neptune, lists recent bulk-load jobs with their status, and counts loaded nodes.
-- **Engine version not offered in your region:** `aws neptune describe-db-engine-versions --engine neptune --query "DBEngineVersions[].EngineVersion"`, then `cdk deploy -c neptuneEngineVersion=<version>`.
+- **Engine version not offered in your region:** `aws neptune describe-db-engine-versions --engine neptune --query "DBEngineVersions[].EngineVersion"`, then `cdk deploy --all -c neptuneEngineVersion=<version>`.
 - **Access denied right after a deploy:** IAM changes can take a few minutes to apply; retry.
 
 ## Simplifications
@@ -239,7 +243,7 @@ CI (`.github/workflows/ci.yml`) runs the tests and `cdk synth` on every push.
 ## Teardown
 
 ```bash
-cdk destroy
+cdk destroy --all
 ```
 
 The cluster, instance, bucket (and its objects) and log group are all set to be deleted with
