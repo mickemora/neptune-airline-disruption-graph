@@ -45,6 +45,7 @@ flowchart LR
 | Neptune Serverless cluster | 1 writer instance, `db.serverless`, 1–8 NCU by default, IAM auth, encrypted |
 | S3 bucket + `BucketDeployment` | Uploads the generated CSVs at deploy time |
 | Loader IAM role | Associated with the cluster; read-only on the bucket |
+| Neptune workbench notebook (optional, on by default) | Jupyter with graph-notebook and **Graph Explorer**, connected to the cluster with IAM auth. It has an interface in the isolated subnet to reach Neptune, and SageMaker-provided internet access to install its software. |
 | Graph API Lambda | The only path into the cluster. Runs bulk loads, named queries, ad-hoc Cypher and the impact analysis. Uses boto3's `neptunedata` client, which signs requests with SigV4. |
 
 ## Graph model
@@ -95,6 +96,7 @@ Optional context overrides:
 
 ```bash
 cdk deploy -c neptuneEngineVersion=1.4.7.1 -c minNcu=1 -c maxNcu=16
+cdk deploy -c graphExplorer=false     # skip the Graph Explorer notebook
 ```
 
 ## Load and explore
@@ -159,6 +161,25 @@ DAL-ATL  12:30      WN2089         21:05  23:05    46     False
 Note crew pairing `PR0048`: that crew flies the late WN526 into DAL and then changes aircraft,
 making two flights late that the aircraft ripple never touched. Pairing `PR0020` ends up past
 its duty limit.
+
+### Explore it in Graph Explorer
+
+The stack includes a Neptune workbench notebook (`aws-neptune-airline-disruption`, an
+ml.t3.medium) with [Graph Explorer](https://docs.aws.amazon.com/neptune/latest/userguide/visualization-graph-explorer.html)
+already connected to the cluster. After `cdk deploy`, wait until the notebook's status is
+**InService** (its first start installs the software and takes several minutes), then:
+
+1. Open the **Neptune console**, choose **Notebooks**, and select `aws-neptune-airline-disruption`.
+2. Choose **Actions → Open Graph Explorer**.
+3. Search for a node, for example a `Flight` with `flightId` WN3553, and expand its neighbours to
+   follow the aircraft, crews and passengers.
+
+The same notebook also offers **Open JupyterLab**, with Neptune's starter notebooks and the
+`%%oc` openCypher magic, whose results can be shown as a graph.
+
+The notebook bills about $0.05 an hour while it is running (us-east-1). Stop it from the console
+when you're not using it, or deploy with `-c graphExplorer=false` to leave it out.
+`cdk destroy` removes it with the rest of the stack.
 
 ### Visualize it
 

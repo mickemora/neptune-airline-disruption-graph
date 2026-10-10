@@ -1,11 +1,11 @@
-"""Neptune Serverless + bulk-load pipeline + query Lambda, all in one stack."""
+"""Neptune Serverless + bulk-load pipeline + query Lambda (+ optional Graph Explorer)."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from aws_cdk import (
-    Aws, CfnOutput, Duration, RemovalPolicy, Stack,
+    Aws, CfnOutput, CfnTag, Duration, Fn, RemovalPolicy, Stack,
     aws_ec2 as ec2,
     aws_iam as iam,
     aws_lambda as lambda_,
@@ -13,16 +13,20 @@ from aws_cdk import (
     aws_neptune as neptune,
     aws_s3 as s3,
     aws_s3_deployment as s3deploy,
+    aws_sagemaker as sagemaker,
 )
 from constructs import Construct
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_PREFIX = "graph"
+# The Neptune console only lists notebooks whose names start with "aws-neptune-".
+NOTEBOOK_NAME = "aws-neptune-airline-disruption"
 
 
 class NeptuneAirlineStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, *, data_dir: Path,
-                 engine_version: str, min_ncu: float, max_ncu: float, **kwargs) -> None:
+                 engine_version: str, min_ncu: float, max_ncu: float,
+                 graph_explorer: bool = True, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
         # ---------------------------------------------------------------- network
@@ -139,8 +143,95 @@ class NeptuneAirlineStack(Stack):
             resources=[cluster_data_arn],
         ))
 
+        if graph_explorer:
+            self._add_graph_explorer_notebook(vpc, isolated, neptune_sg, cluster, writer,
+                                              cluster_data_arn, loader_role)
+
         # ---------------------------------------------------------------- outputs
         CfnOutput(self, "GraphApiFunctionName", value=fn.function_name)
         CfnOutput(self, "NeptuneEndpoint", value=cluster.attr_endpoint)
         CfnOutput(self, "DataBucketName", value=bucket.bucket_name)
         CfnOutput(self, "LoaderRoleArn", value=loader_role.role_arn)
+
+    # -------------------------------------------------------------------- Graph Explorer
+    def _add_graph_explorer_notebook(self, vpc, isolated, neptune_sg, cluster, writer,
+                                     cluster_data_arn, loader_role) -> None:
+        """A Neptune workbench notebook: Jupyter + graph-notebook + Graph Explorer.
+
+        Mirrors AWS's own workbench template (aws/graph-notebook, neptune-workbench-stack):
+        the "aws-neptune-" name and the two aws-neptune-* tags are what make the Neptune
+        console list it and offer "Open Graph Explorer".
+
+        Networking: the notebook gets an interface in our isolated subnet to reach Neptune,
+        and SageMaker's own internet access (DirectInternetAccess) to download the
+        workbench software. The Neptune cluster itself stays without any internet path.
+        """
+        notebook_sg = ec2.SecurityGroup(self, "NotebookSg", vpc=vpc,
+                                        description="Neptune workbench notebook",
+                                        allow_all_outbound=True)
+        neptune_sg.add_ingress_rule(notebook_sg, ec2.Port.tcp(8182), "Workbench notebook")
+
+        software_bucket = f"aws-neptune-notebook-{Aws.REGION}"
+        role = iam.Role(
+            self, "NotebookRole",
+            assumed_by=iam.ServicePrincipal("sagemaker.amazonaws.com"),
+            description="Neptune workbench notebook (Graph Explorer)",
+        )
+        role.add_to_policy(iam.PolicyStatement(
+            actions=["s3:GetObject", "s3:ListBucket"],
+            resources=[f"arn:{Aws.PARTITION}:s3:::{software_bucket}",
+                       f"arn:{Aws.PARTITION}:s3:::{software_bucket}/*"]))
+        role.add_to_policy(iam.PolicyStatement(
+            actions=["neptune-db:*"], resources=[cluster_data_arn]))
+        role.add_to_policy(iam.PolicyStatement(
+            actions=["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+            resources=[f"arn:{Aws.PARTITION}:logs:{Aws.REGION}:{Aws.ACCOUNT_ID}:"
+                       "log-group:/aws/sagemaker/*"]))
+
+        # Start script from the Neptune docs (Amazon Linux 2, JupyterLab 4). Runs on every
+        # notebook start; it writes the connection settings, then installs the workbench.
+        on_start = "\n".join([
+            "#!/bin/bash",
+            "sudo -u ec2-user -i <<'EOF'",
+            "echo 'export GRAPH_NOTEBOOK_AUTH_MODE=IAM' >> ~/.bashrc",
+            "echo 'export GRAPH_NOTEBOOK_SSL=True' >> ~/.bashrc",
+            "echo 'export GRAPH_NOTEBOOK_SERVICE=neptune-db' >> ~/.bashrc",
+            f"echo 'export GRAPH_NOTEBOOK_HOST={cluster.attr_endpoint}' >> ~/.bashrc",
+            f"echo 'export GRAPH_NOTEBOOK_PORT={cluster.attr_port}' >> ~/.bashrc",
+            f"echo 'export NEPTUNE_LOAD_FROM_S3_ROLE_ARN={loader_role.role_arn}' >> ~/.bashrc",
+            f"echo 'export AWS_REGION={Aws.REGION}' >> ~/.bashrc",
+            f"aws s3 cp s3://{software_bucket}/graph_notebook.tar.gz /tmp/graph_notebook.tar.gz",
+            "rm -rf /tmp/graph_notebook",
+            "tar -zxvf /tmp/graph_notebook.tar.gz -C /tmp",
+            "/tmp/graph_notebook/install_jl4x.sh",
+            "EOF",
+            "",
+        ])
+        lifecycle = sagemaker.CfnNotebookInstanceLifecycleConfig(
+            self, "NotebookLifecycle",
+            notebook_instance_lifecycle_config_name=NOTEBOOK_NAME,
+            on_start=[sagemaker.CfnNotebookInstanceLifecycleConfig
+                      .NotebookInstanceLifecycleHookProperty(content=Fn.base64(on_start))],
+        )
+
+        notebook = sagemaker.CfnNotebookInstance(
+            self, "Notebook",
+            notebook_instance_name=NOTEBOOK_NAME,
+            instance_type="ml.t3.medium",
+            platform_identifier="notebook-al2-v3",
+            role_arn=role.role_arn,
+            subnet_id=isolated.subnet_ids[0],
+            security_group_ids=[notebook_sg.security_group_id],
+            direct_internet_access="Enabled",
+            lifecycle_config_name=lifecycle.attr_notebook_instance_lifecycle_config_name,
+            tags=[CfnTag(key="aws-neptune-cluster-id", value=cluster.ref),
+                  CfnTag(key="aws-neptune-resource-id",
+                         value=cluster.attr_cluster_resource_id)],
+        )
+        notebook.add_dependency(writer)
+        notebook.node.add_dependency(role)
+
+        CfnOutput(self, "NotebookName", value=notebook.attr_notebook_instance_name)
+        CfnOutput(self, "GraphExplorerHowTo",
+                  value="Neptune console > Notebooks > select " + NOTEBOOK_NAME +
+                        " > Actions > Open Graph Explorer")
