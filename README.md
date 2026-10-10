@@ -297,6 +297,29 @@ adds Bedrock model usage. Pin a model with `cdk deploy --all -c agentModelId=<id
 Logs: the runtime writes to CloudWatch under `/aws/bedrock-agentcore/runtimes/`, and the tools
 Lambda logs each tool call (name and arguments).
 
+### Web app
+
+A browser UI for the agent, built with [Streamlit](https://streamlit.io): chat on the left, a
+live impact dashboard on the right.
+
+```bash
+pip install -r requirements-ui.txt
+streamlit run ui/app.py          # opens http://localhost:8501
+```
+
+- **Chat** with the agent hosted on AgentCore (default) or the local one (sidebar switch).
+  Each answer shows the tools the agent used; example questions are one click away.
+- **Dashboard** for the disruption the agent last simulated: flights delayed, crew duty
+  breaches, misconnected passengers and rebooking markets; the interactive cascade drawing;
+  and tables for crew duty, missed connections and rebooking options. Ask "what if it's only
+  90 minutes?" and it redraws. Earlier scenarios stay in the selector so you can compare.
+- Before the first analysis it shows the route network.
+
+It runs on your laptop with your AWS credentials (same as the CLI) and costs nothing beyond the
+agent and graph calls it makes. The drawing loads its library from unpkg.com, so it needs
+internet access. Code: `ui/app.py` (layout) and `ui/backend.py` (agent calls and dashboard
+data, unit-tested); CI also runs the whole app headless with a stand-in agent.
+
 ### How it works
 
 1. `AIRCRAFT_RIPPLE` finds the aircraft's remaining legs. `propagate_aircraft_delay` pushes the delay forward, reducing it by any turn time beyond the 35-minute minimum.
@@ -358,5 +381,6 @@ agent/                       AI operations agent (Strands + Bedrock): tools, pro
 infra/graph_explorer_stack.py  Neptune workbench notebook with Graph Explorer
 infra/agentcore_stack.py     AgentCore Runtime, Gateway, Memory for the hosted agent
 scripts/build_agent_package.py  Builds the AgentCore code package (Linux arm64)
+ui/                          Streamlit web app: chat + impact dashboard
 tests/                       pytest suite + in-memory query stand-ins
 ```
