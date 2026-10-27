@@ -1,0 +1,45 @@
+resources:
+  jobs:
+    airline_ops_daily:
+      name: airline-ops-daily
+      description: >
+        Builds the day of operations: seeds governed reference data, lands the source
+        files, refreshes the bronze/silver/gold pipeline, publishes the semantic layer
+        (ontology, tags, metric views) and exports the graph for Neptune.
+      max_concurrent_runs: 1
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+      tasks:
+        - task_key: setup_reference_data
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/tasks/airline_tasks.py
+            parameters: [setup, --catalog, "${var.catalog}", --files-root, "${workspace.file_path}"]
+
+        - task_key: land_source_files
+          depends_on: [{task_key: setup_reference_data}]
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/tasks/airline_tasks.py
+            parameters: [land, --catalog, "${var.catalog}", --files-root, "${workspace.file_path}"]
+
+        - task_key: refresh_lakehouse
+          depends_on: [{task_key: land_source_files}]
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.airline_ops_lakehouse.id}
+
+        - task_key: publish_semantic_layer
+          depends_on: [{task_key: refresh_lakehouse}]
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/tasks/airline_tasks.py
+            parameters: [semantic, --catalog, "${var.catalog}", --files-root, "${workspace.file_path}"]
+
+        - task_key: export_graph
+          depends_on: [{task_key: publish_semantic_layer}]
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/tasks/airline_tasks.py
+            parameters: [export, --catalog, "${var.catalog}", --files-root, "${workspace.file_path}"]

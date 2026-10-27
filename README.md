@@ -71,9 +71,10 @@ graph LR
 |---|---|---|
 | `Airport` | 26 | `code`, `city`, `isHub` |
 | `Aircraft` | 40 | `tail`, `type` (737-700 / -800 / MAX 8), `seats` |
-| `Flight` | 234 | `flightId`, `origin`, `dest`, `schedDepMin`, `schedArrMin`, `tail`, `legSeq`, `seatsAvailable` |
+| `Flight` | 234 | `flightId`, `origin`, `dest`, `schedDepMin`, `schedArrMin`, `tail`, `legSeq`, `seatsAvailable`, `status`, `estDelayMin` |
 | `Crew` | 472 | `role`, `pairingId`, `dutyLimitMin` |
 | `Passenger` | ~27.4k | `tier` (A-List Preferred / A-List / Member / None) |
+| `BusinessRule` | 7 | `ruleId`, `value` (minimum connect time, turn time, crew duty rules, hub). Read by the impact analysis at query time. |
 | `BOOKED_ON` | ~31.7k | `pnr`, `segment`. About 4.3k are second legs of connections. |
 | `NEXT_LEG` / `ASSIGNED_TO` / `ROUTE` | 194 / 1,333 / 132 | `turnMin` / `seq` / `distanceMi` |
 
@@ -330,7 +331,28 @@ data, unit-tested); CI also runs the whole app headless with a stand-in agent.
 4. `REBOOK_DIRECT` and `REBOOK_ONE_STOP` (both `UNWIND` over a batch of requests) find options with open seats, and `best_options` ranks them by projected arrival.
 
 The Cypher lives in `queries.py` and the scheduling rules in `impact.py`, which has no AWS
-dependencies and is unit-tested directly.
+dependencies and is unit-tested directly. The rule values (35, 30, 30, 15 minutes) are read
+at query time from the graph's `BusinessRule` nodes, so a definition changed in Unity Catalog
+reaches the analysis on the next load (see below); `impact.py` holds only the defaults. Each
+report says which values it used in `rulesApplied`.
+
+## Feed it from Databricks (Unity Catalog)
+
+The graph can also be built by a **Databricks lakehouse** instead of the generator: seven
+mock source systems (schedule, fleet, network plan, crew pairings, reservations CDC, loyalty,
+ops events) flow through a Lakeflow pipeline (bronze → silver → gold), governed business
+rules and an **ontology** in Unity Catalog define what the data means, **metric views**
+publish the KPIs, and the gold tables are exported in Neptune's bulk-load format. It runs on
+Databricks Free Edition and is deployed as a bundle.
+
+```bash
+cd databricks && databricks bundle deploy && databricks bundle run airline_ops_daily
+cd .. && python scripts/graph.py load --from-databricks --profile <cli-profile>
+```
+
+Change `MIN_CONNECT_MIN` in `airline_semantic.business_rules`, rerun, reload, and the metric
+views, the graph and the AI agent all apply the new value. Full walkthrough:
+[databricks/README.md](databricks/README.md).
 
 ## Tests
 
@@ -342,6 +364,7 @@ pytest -q
 - `tests/test_impact.py` unit-tests the delay, crew, misconnect and rebooking rules, then runs the full `impact` action end to end against `tests/fake_graph.py` (in-memory versions of each query).
 - `tests/test_visualize.py` validates graph visualization data generation.
 - The agent tool implementations and hosted tool schemas are tested independently of live AWS resources.
+- `tests/test_lakehouse.py` runs the Databricks pipeline's transformations on local Spark (needs Java 17+): the source files must come out as exactly the graph the generator writes, the quality rules must drop exactly the bad records, every metric view expression must run, and changing a business rule must change the outputs. `test_sources.py`, `test_ontology.py` and `test_bundle.py` check the source files, the ontology contract and the bundle configuration; `test_databricks_handoff.py` covers the rules in the impact analysis and the export relay to S3.
 
 CI (`.github/workflows/ci.yml`) runs the tests and `cdk synth` on every push.
 
@@ -384,5 +407,9 @@ infra/graph_explorer_stack.py  Neptune workbench notebook with Graph Explorer
 infra/agentcore_stack.py     AgentCore Runtime, Gateway, Memory for the hosted agent
 scripts/build_agent_package.py  Builds the AgentCore code package (Linux arm64)
 ui/                          Streamlit web app: chat + impact dashboard
+datagen/sources.py           The same day as raw source-system files (for Databricks)
+datagen/business_rules.py    Shared business rules and loyalty tiers (seed values)
+databricks/                  Databricks bundle: Lakeflow pipeline, ontology, metric views,
+                             job tasks, graph export (see databricks/README.md)
 tests/                       pytest suite + in-memory query stand-ins
 ```

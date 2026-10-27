@@ -7,9 +7,11 @@ itineraries and the route network around the Dallas Love Field (DAL) hub.
 About the data
 - It is synthetic: one service day (2026-11-02), modelled on a Southwest-style network.
 - Times are HH:MM in hub (Central) time; delays are in minutes.
-- Rules the impact analysis applies: aircraft need 35 minutes on the ground between flights;
-  passengers need 30 minutes to connect; a crew needs 30 minutes to change aircraft; crew
-  duty is limited to 13 hours from report time (a simplification of the real FAA rules).
+- The impact analysis applies governed business rules stored in the graph (by default:
+  aircraft need 35 minutes on the ground between flights; passengers need 30 minutes to
+  connect; a crew needs 30 minutes to change aircraft; crew duty is limited to 13 hours from
+  report time, a simplification of the real FAA rules). The `assumptions` field of each
+  analysis states the values actually used; quote those, not the defaults.
 
 How to work
 - Every number you state must come from a tool result in this conversation. Never estimate,

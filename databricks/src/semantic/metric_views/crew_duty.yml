@@ -1,0 +1,29 @@
+version: 1.1
+comment: "Crew pairings against the governed duty limits (business rules CREW_REPORT_MIN, CREW_DEBRIEF_MIN, MAX_DUTY_MIN)."
+source: ${catalog}.airline_gold.crew_duty
+dimensions:
+  - name: Crew Base
+    expr: base
+    comment: "Captain's base airport."
+  - name: Legs In Pairing
+    expr: leg_count
+    comment: "Number of legs the pairing works."
+  - name: Changes Aircraft
+    expr: aircraft_changes > 0
+    comment: "True when the crew moves between aircraft, so a late inbound aircraft can delay a different tail."
+measures:
+  - name: Pairings
+    expr: COUNT(1)
+    comment: "Crew pairings."
+  - name: Crew Members
+    expr: SUM(crew_count)
+    comment: "Crew members across pairings."
+  - name: Average Duty Buffer Minutes
+    expr: AVG(buffer_min)
+    comment: "Average time between scheduled release and the duty limit."
+  - name: Tightest Duty Buffer Minutes
+    expr: MIN(buffer_min)
+    comment: "Smallest scheduled buffer: how much delay the most exposed pairing can absorb."
+  - name: Pairings Within 60 Min Of Limit
+    expr: COUNT(1) FILTER (WHERE buffer_min < 60)
+    comment: "Pairings that a one-hour delay would push past the duty limit."

@@ -1,0 +1,179 @@
+# Airline operations ontology: the contract between the lakehouse and the graph.
+#
+# One file defines, for every entity and relationship:
+#   - what it means (descriptions become Unity Catalog table and column comments,
+#     and rows in the queryable airline_semantic.ontology_* tables)
+#   - the gold table that holds it and that table's typed schema (the pipeline
+#     enforces it; a transform that drifts from the ontology fails the update)
+#   - how it is projected into Neptune (label or relationship type, id prefix,
+#     property names and openCypher types, export file name)
+#
+# Property names are camelCase graph properties; the gold column is the snake_case
+# form unless `column` says otherwise. Types: String, Int, Double, Bool.
+
+name: airline-ops
+version: "1.0"
+owner: Network Operations Control
+description: >
+  Day-of-operations model of a point-to-point airline network: where aircraft fly,
+  which crews work them, and which passengers connect between them.
+
+entities:
+  - label: Airport
+    table: node_airport
+    file: airports.csv
+    id_prefix: AP-
+    description: An airport served by the network, identified by its IATA code.
+    properties:
+      - {name: code, type: String, description: "IATA airport code, e.g. DAL."}
+      - {name: name, type: String, description: "Airport name."}
+      - {name: city, type: String, description: "City served."}
+      - {name: state, type: String, description: "US state or territory."}
+      - {name: lat, type: Double, description: "Latitude in decimal degrees."}
+      - {name: lon, type: Double, description: "Longitude in decimal degrees."}
+      - {name: isHub, type: Bool, description: "True for the airport named by the HUB_AIRPORT business rule."}
+
+  - label: Aircraft
+    table: node_aircraft
+    file: aircraft.csv
+    id_prefix: AC-
+    description: An active aircraft in the fleet, identified by its tail number.
+    properties:
+      - {name: tail, type: String, description: "Registration (tail) number."}
+      - {name: type, type: String, column: aircraft_type, description: "Aircraft type, e.g. 737 MAX 8."}
+      - {name: seats, type: Int, description: "Seats in the current cabin configuration."}
+      - {name: base, type: String, description: "Overnight base airport."}
+
+  - label: Flight
+    table: node_flight
+    file: flights.csv
+    id_prefix: FL-
+    description: >
+      One scheduled flight leg on the service date. Times are minutes after midnight in
+      hub time; values past 1440 arrive after midnight.
+    properties:
+      - {name: flightId, type: String, description: "Carrier code and flight number, e.g. WN1234."}
+      - {name: date, type: String, column: service_date, description: "Service date (yyyy-MM-dd)."}
+      - {name: origin, type: String, description: "Departure airport code."}
+      - {name: dest, type: String, description: "Arrival airport code."}
+      - {name: schedDepMin, type: Int, description: "Scheduled departure, minutes after midnight."}
+      - {name: schedArrMin, type: Int, description: "Scheduled arrival, minutes after midnight."}
+      - {name: schedDep, type: String, description: "Scheduled departure as HH:MM."}
+      - {name: schedArr, type: String, description: "Scheduled arrival as HH:MM."}
+      - {name: distanceMi, type: Int, description: "Great-circle distance in statute miles."}
+      - {name: tail, type: String, description: "Tail number of the aircraft operating the leg."}
+      - {name: legSeq, type: Int, description: "Position of the leg in the aircraft's day (1 = first)."}
+      - {name: capacity, type: Int, description: "Seats on the operating aircraft."}
+      - {name: booked, type: Int, description: "Confirmed passengers (active reservation segments)."}
+      - {name: seatsAvailable, type: Int, description: "Capacity minus booked."}
+      - {name: status, type: String, description: "SCHEDULED, or DELAYED when ops control has posted a later estimated departure."}
+      - {name: estDelayMin, type: Int, description: "Latest estimated departure delay in minutes (0 when on time)."}
+
+  - label: Crew
+    table: node_crew
+    file: crew.csv
+    id_prefix: CR-
+    description: A crew member working one pairing (sequence of legs) on the service date.
+    properties:
+      - {name: crewId, type: String, description: "Employee id."}
+      - {name: name, type: String, description: "Full name."}
+      - {name: role, type: String, description: "Captain, First Officer or Flight Attendant."}
+      - {name: base, type: String, description: "Crew base airport."}
+      - {name: pairingId, type: String, description: "Pairing the crew member works today."}
+      - {name: dutyStartMin, type: Int, description: "Duty start (first departure minus the CREW_REPORT_MIN rule)."}
+      - {name: dutyLimitMin, type: Int, description: "Latest legal release (duty start plus the MAX_DUTY_MIN rule)."}
+
+  - label: Passenger
+    table: node_passenger
+    file: passengers.csv
+    id_prefix: PX-
+    description: A customer holding at least one confirmed segment on the service date.
+    properties:
+      - {name: passengerId, type: String, description: "Customer id shared by reservations and loyalty."}
+      - {name: name, type: String, description: "Name as booked."}
+      - {name: tier, type: String, description: "Loyalty tier name (None for non-members)."}
+
+  - label: BusinessRule
+    table: node_business_rule
+    file: business_rules.csv
+    id_prefix: BR-
+    description: >
+      A governed operating rule from airline_semantic.business_rules. The graph API
+      reads these at query time, so the graph applies the same definitions as the
+      lakehouse.
+    properties:
+      - {name: ruleId, type: String, description: "Rule identifier, e.g. MIN_CONNECT_MIN."}
+      - {name: value, type: String, description: "Rule value as text."}
+      - {name: unit, type: String, description: "Unit of the value."}
+      - {name: description, type: String, description: "What the rule means."}
+
+relationships:
+  - type: ROUTE
+    table: edge_route
+    file: routes.csv
+    from: Airport
+    to: Airport
+    id_prefix: RT-
+    description: An authorized city pair in the network plan (one per direction).
+    properties:
+      - {name: distanceMi, type: Int, description: "Great-circle distance in statute miles."}
+
+  - type: DEPARTS_FROM
+    table: edge_departs_from
+    file: departs_from.csv
+    from: Flight
+    to: Airport
+    id_prefix: DF-
+    description: The airport a flight departs from.
+    properties: []
+
+  - type: ARRIVES_AT
+    table: edge_arrives_at
+    file: arrives_at.csv
+    from: Flight
+    to: Airport
+    id_prefix: AA-
+    description: The airport a flight arrives at.
+    properties: []
+
+  - type: OPERATES
+    table: edge_operates
+    file: operates.csv
+    from: Aircraft
+    to: Flight
+    id_prefix: OP-
+    description: The aircraft assigned to fly a leg.
+    properties:
+      - {name: legSeq, type: Int, description: "Position of the leg in the aircraft's day."}
+
+  - type: NEXT_LEG
+    table: edge_next_leg
+    file: next_leg.csv
+    from: Flight
+    to: Flight
+    id_prefix: NL-
+    description: The same aircraft's next leg. A late arrival delays the next leg once the turn buffer is used up.
+    properties:
+      - {name: turnMin, type: Int, description: "Scheduled ground time between the two legs."}
+
+  - type: ASSIGNED_TO
+    table: edge_assigned_to
+    file: assigned_to.csv
+    from: Crew
+    to: Flight
+    id_prefix: AS-
+    description: A crew member working a leg. Crews that change aircraft carry delays to other tails.
+    properties:
+      - {name: seq, type: Int, description: "Position of the leg in the crew member's pairing."}
+      - {name: role, type: String, description: "Role on the leg."}
+
+  - type: BOOKED_ON
+    table: edge_booked_on
+    file: booked_on.csv
+    from: Passenger
+    to: Flight
+    id_prefix: BK-
+    description: A confirmed reservation segment. Two segments on one record locator form a connection.
+    properties:
+      - {name: pnr, type: String, column: record_locator, description: "Reservation record locator."}
+      - {name: segment, type: Int, column: segment_no, description: "Segment number within the record locator."}

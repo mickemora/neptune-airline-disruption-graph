@@ -103,10 +103,16 @@ def analyze_disruption(flight_id: str, delay_minutes: int) -> dict:
         "crewPairings": crew,
         "misconnects": _cap(misconnects),
         "rebooking": _cap(rebooking, 10),
-        "assumptions": "min aircraft turn 35 min; passenger min connect 30 min; crew aircraft "
-                       "change 30 min; duty limit 13 h from report (simplified); single pass "
-                       "(crew-caused delays are not propagated further)",
+        "assumptions": _assumptions(r.get("rulesApplied") or {}),
     }
+
+
+def _assumptions(rules: dict) -> str:
+    return (f"min aircraft turn {rules.get('minTurnMin', 35)} min; passenger min connect "
+            f"{rules.get('minConnectMin', 30)} min; crew aircraft change "
+            f"{rules.get('crewMinConnectMin', 30)} min; crew duty limits as stored on each crew "
+            f"member; rules from {rules.get('source', 'defaults')}; single pass "
+            "(crew-caused delays are not propagated further)")
 
 
 def get_flight(flight_id: str) -> dict:

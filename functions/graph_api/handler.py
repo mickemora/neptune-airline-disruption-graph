@@ -2,6 +2,7 @@
 
 Event shapes:
   {"action": "load"}                                   start bulk load (nodes, then edges)
+  {"action": "load", "source": "s3://<bucket>/<prefix>"}  load another export (same bucket)
   {"action": "load_status", "loadId": "..."}           loader job status (+ first errors)
   {"action": "list_queries"}
   {"action": "query", "name": "hub_connections", "params": {"limit": 5}}
@@ -49,10 +50,17 @@ def run(query: str, params: dict | None = None) -> list[dict]:
 
 # --------------------------------------------------------------------------- actions
 
-def action_load(_event):
+def action_load(event):
     region = os.environ["AWS_REGION"]
     role = os.environ["LOADER_ROLE_ARN"]
     base = os.environ["DATA_S3_URI"].rstrip("/")
+    if event.get("source"):
+        # e.g. an export staged from Databricks; the loader role can read this bucket only
+        bucket = base.split("/")[2]
+        source = event["source"].rstrip("/")
+        if not source.startswith(f"s3://{bucket}/"):
+            raise ValueError(f"source must be under s3://{bucket}/")
+        base = source
     common = dict(format="opencypher", s3BucketRegion=region, iamRoleArn=role,
                   failOnError=True, parallelism="MEDIUM", queueRequest=True,
                   updateSingleCardinalityProperties=True)
@@ -118,9 +126,35 @@ def action_cypher(event):
     return run(event["query"], event.get("params"))
 
 
+# BusinessRule.ruleId -> impact parameter. Values not in the graph keep impact.py defaults.
+RULE_PARAMS = {
+    "MIN_TURN_MIN": "minTurnMin",
+    "MIN_CONNECT_MIN": "minConnectMin",
+    "CREW_MIN_CONNECT_MIN": "crewMinConnectMin",
+    "CREW_DEBRIEF_MIN": "crewDebriefMin",
+}
+
+
+def load_rules() -> dict:
+    """Operating rules for this analysis: the graph's BusinessRule nodes, else defaults."""
+    rules = {"minTurnMin": impact.MIN_TURN, "minConnectMin": impact.MIN_CONNECT,
+             "crewMinConnectMin": impact.CREW_MIN_CONNECT,
+             "crewDebriefMin": impact.CREW_DEBRIEF, "source": "defaults"}
+    for row in run(queries.BUSINESS_RULES):
+        key = RULE_PARAMS.get(row.get("ruleId"))
+        if key:
+            try:
+                rules[key] = int(row["value"])
+                rules["source"] = "BusinessRule nodes"
+            except (TypeError, ValueError):
+                pass
+    return rules
+
+
 def action_impact(event):
     flight_id = event["flightId"]
     delay = int(event["delayMin"])
+    rules = load_rules()
 
     # 1. Aircraft rotation ripple.
     legs = run(queries.FLIGHT_LEG, {"flightId": flight_id})
@@ -128,11 +162,12 @@ def action_impact(event):
         raise ValueError(f"flight {flight_id} not found; try `query hub_connections` "
                          "or `query aircraft_rotation` to find flight numbers")
     legs += run(queries.AIRCRAFT_RIPPLE, {"flightId": flight_id})
-    delays = impact.propagate_aircraft_delay(legs, delay)
+    delays = impact.propagate_aircraft_delay(legs, delay, rules["minTurnMin"])
 
     # 2. Crew pairings on any delayed flight (may delay other aircraft).
     crew_rows = run(queries.CREW_SEQUENCES, {"flightIds": list(delays)})
-    crew = impact.crew_impacts(crew_rows, delays)
+    crew = impact.crew_impacts(crew_rows, delays, rules["crewMinConnectMin"],
+                               rules["crewDebriefMin"])
     all_delays = dict(delays)
     for p in crew:
         for leg in p["legs"]:
@@ -141,15 +176,15 @@ def action_impact(event):
 
     # 3. Passenger connections out of every delayed flight.
     conn_rows = run(queries.CONNECTIONS_FROM, {"flightIds": list(all_delays)})
-    misconnects = impact.find_misconnects(conn_rows, all_delays)
+    misconnects = impact.find_misconnects(conn_rows, all_delays, rules["minConnectMin"])
 
     # 4. Rebooking options for stranded connections (direct and one-stop).
-    requests = impact.rebook_requests(misconnects)
+    requests = impact.rebook_requests(misconnects, rules["minConnectMin"])
     options = []
     if requests:
         rows = run(queries.REBOOK_DIRECT, {"requests": requests})
         rows += run(queries.REBOOK_ONE_STOP,
-                    {"requests": requests, "minConnect": impact.MIN_CONNECT})
+                    {"requests": requests, "minConnect": rules["minConnectMin"]})
         options = impact.best_options(rows, all_delays)
 
     origin = legs[0]
@@ -173,6 +208,7 @@ def action_impact(event):
         "misconnects": [{k: v for k, v in m.items() if k != "passengerIds"}
                         | {"samplePassengerIds": m["passengerIds"][:5]} for m in misconnects],
         "rebookingOptions": options,
+        "rulesApplied": rules,
     }
 
 

@@ -4,7 +4,7 @@ Usage:
     python -m datagen.generate [--out data/generated] [--seed 42] [--aircraft 40]
 
 Output layout (each folder is loaded as its own Neptune bulk-load job, nodes first):
-    <out>/nodes/*.csv   Airport, Aircraft, Flight, Crew, Passenger
+    <out>/nodes/*.csv   Airport, Aircraft, Flight, Crew, Passenger, BusinessRule
     <out>/edges/*.csv   ROUTE, DEPARTS_FROM, ARRIVES_AT, OPERATES, NEXT_LEG,
                         ASSIGNED_TO, BOOKED_ON
 
@@ -27,19 +27,22 @@ from pathlib import Path
 from datagen.airports import (
     AIRPORTS, FIRST_NAMES, FLEET_MIX, FOCUS_CITIES, HUB, LAST_NAMES, POINT_TO_POINT, TIERS,
 )
+from datagen.business_rules import BUSINESS_RULES, int_rule
 
 SERVICE_DATE = "2026-11-02"
+DATA_FORMAT = 2   # bump when the CSV layout changes; app.py regenerates older datasets
 CARRIER = "WN"
 
 FIRST_DEPARTURE = 6 * 60          # 06:00
 LAST_DEPARTURE = 21 * 60 + 30     # 21:30
-MIN_TURN = 35                     # minimum aircraft turn, minutes
 MIN_CONNECT = 40                  # minimum passenger connection used when booking
 MAX_CONNECT = 150                 # longest connection a booked itinerary will have
-CREW_MIN_CONNECT = 30             # crew changing aircraft
-CREW_REPORT = 60                  # report time before first departure
-CREW_DEBRIEF = 15                 # release time after last arrival
-MAX_DUTY = 13 * 60                # simplified flight-duty-period limit
+# Operating rules come from the shared business definitions (see business_rules.py).
+MIN_TURN = int_rule("MIN_TURN_MIN")                  # minimum aircraft turn
+CREW_MIN_CONNECT = int_rule("CREW_MIN_CONNECT_MIN")  # crew changing aircraft
+CREW_REPORT = int_rule("CREW_REPORT_MIN")            # report time before first departure
+CREW_DEBRIEF = int_rule("CREW_DEBRIEF_MIN")          # release time after last arrival
+MAX_DUTY = int_rule("MAX_DUTY_MIN")                  # simplified flight-duty-period limit
 
 
 def hhmm(minutes: int) -> str:
@@ -332,10 +335,11 @@ class Generator:
             [":ID", ":LABEL", "flightId:String", "date:String", "origin:String", "dest:String",
              "schedDepMin:Int", "schedArrMin:Int", "schedDep:String", "schedArr:String",
              "distanceMi:Int", "tail:String", "legSeq:Int", "capacity:Int", "booked:Int",
-             "seatsAvailable:Int", "status:String"],
+             "seatsAvailable:Int", "status:String", "estDelayMin:Int"],
             ([f"FL-{f.flight_id}", "Flight", f.flight_id, SERVICE_DATE, f.origin, f.dest,
               f.dep, f.arr, hhmm(f.dep), hhmm(f.arr), f.distance, f.tail, f.leg_seq,
-              f.capacity, f.booked, f.seats_available, "SCHEDULED"] for f in self.flights))
+              f.capacity, f.booked, f.seats_available, "SCHEDULED", 0]
+             for f in self.flights))
         counts["Crew"] = write_csv(
             nodes / "crew.csv",
             [":ID", ":LABEL", "crewId:String", "name:String", "role:String", "base:String",
@@ -347,6 +351,12 @@ class Generator:
             [":ID", ":LABEL", "passengerId:String", "name:String", "tier:String"],
             ([f"PX-{p['id']}", "Passenger", p["id"], p["name"], p["tier"]]
              for p in self.passengers))
+        counts["BusinessRule"] = write_csv(
+            nodes / "business_rules.csv",
+            [":ID", ":LABEL", "ruleId:String", "value:String", "unit:String",
+             "description:String"],
+            ([f"BR-{rid}", "BusinessRule", rid, value, unit, desc]
+             for rid, value, unit, desc, _owner in BUSINESS_RULES))
 
         edge_header = [":ID", ":START_ID", ":END_ID", ":TYPE"]
         route_rows = []
@@ -381,10 +391,12 @@ class Generator:
               "ASSIGNED_TO", a["seq"], a["role"]] for a in self.assignments))
         counts["BOOKED_ON"] = write_csv(
             edges / "booked_on.csv", edge_header + ["pnr:String", "segment:Int"],
-            ([f"BK-{i}", f"PX-{b['pax']}", f"FL-{b['flight']}", "BOOKED_ON", b["pnr"],
-              b["segment"]] for i, b in enumerate(self.bookings, start=1)))
+            # Keyed by record locator + segment, as a reservations system would key it.
+            ([f"BK-{b['pnr']}-{b['segment']}", f"PX-{b['pax']}", f"FL-{b['flight']}",
+              "BOOKED_ON", b["pnr"], b["segment"]] for b in self.bookings))
 
-        manifest = {"serviceDate": SERVICE_DATE, "hub": HUB, "counts": counts,
+        manifest = {"format": DATA_FORMAT, "serviceDate": SERVICE_DATE, "hub": HUB,
+                    "counts": counts,
                     "pairings": len(self.pairings)}
         (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
         return manifest

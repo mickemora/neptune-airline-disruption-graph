@@ -1,0 +1,45 @@
+version: 1.1
+comment: "Connecting itineraries measured against the governed minimum connect time (business rule MIN_CONNECT_MIN)."
+source: ${catalog}.airline_gold.connections
+dimensions:
+  - name: Connect Airport
+    expr: connect_airport
+    comment: "Airport where the passenger changes flights."
+  - name: Final Destination
+    expr: final_dest
+    comment: "Destination of the outbound flight."
+  - name: Passenger Tier
+    expr: tier
+    comment: "Loyalty tier (None for non-members)."
+  - name: Priority Tier
+    expr: is_priority
+    comment: "True for tiers protected first when rebooking (A-List, A-List Preferred)."
+  - name: Connection Window
+    expr: >-
+      CASE WHEN slack_min < 0 THEN '1. Below minimum connect time'
+           WHEN slack_min < 15 THEN '2. Tight (under 15 min of slack)'
+           WHEN slack_min < 45 THEN '3. Comfortable'
+           ELSE '4. Long' END
+    comment: "Scheduled slack over the minimum connect time, bucketed."
+  - name: Same Aircraft
+    expr: same_aircraft
+    comment: "True when both legs use the same aircraft (a through flight cannot misconnect)."
+measures:
+  - name: Connecting Passengers
+    expr: COUNT(1)
+    comment: "Itineraries with a connection."
+  - name: Priority Passengers
+    expr: COUNT(1) FILTER (WHERE is_priority)
+    comment: "Connecting passengers in priority tiers."
+  - name: Tight Connections
+    expr: COUNT(1) FILTER (WHERE slack_min < 15 AND NOT same_aircraft)
+    comment: "Connections within 15 minutes of the minimum connect time, on different aircraft: the first to break when a flight runs late."
+  - name: Below Minimum Connect Time
+    expr: COUNT(1) FILTER (WHERE slack_min < 0 AND NOT same_aircraft)
+    comment: "Connections already shorter than the minimum connect time as scheduled."
+  - name: Average Connect Minutes
+    expr: AVG(connect_min)
+    comment: "Average scheduled connect time."
+  - name: Minimum Connect Time
+    expr: MAX(min_connect_min)
+    comment: "Current value of the MIN_CONNECT_MIN business rule."

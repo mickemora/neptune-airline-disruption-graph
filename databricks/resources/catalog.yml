@@ -1,0 +1,39 @@
+# Schemas (one per layer) and the two volumes: where source files land and where the
+# graph export is written. `bundle destroy` removes them with everything inside.
+
+resources:
+  schemas:
+    airline_landing:
+      catalog_name: ${var.catalog}
+      name: airline_landing
+      comment: Landing zone. Raw files exactly as each source system delivered them.
+    airline_bronze:
+      catalog_name: ${var.catalog}
+      name: airline_bronze
+      comment: Bronze. Raw records ingested with Auto Loader, plus source file and load time.
+    airline_silver:
+      catalog_name: ${var.catalog}
+      name: airline_silver
+      comment: Silver. Cleaned and conformed, one row per business key, quality rules applied.
+    airline_gold:
+      catalog_name: ${var.catalog}
+      name: airline_gold
+      comment: Gold. The graph projection defined by the airline-ops ontology, plus analytics tables.
+    airline_semantic:
+      catalog_name: ${var.catalog}
+      name: airline_semantic
+      comment: Semantic layer. Governed business rules, loyalty tiers, the ontology and metric views.
+
+  volumes:
+    landing_sources:
+      catalog_name: ${var.catalog}
+      schema_name: ${resources.schemas.airline_landing.name}
+      name: sources
+      volume_type: MANAGED
+      comment: One folder per source system (scheduling, crew, reservations, ...).
+    graph_export:
+      catalog_name: ${var.catalog}
+      schema_name: ${resources.schemas.airline_gold.name}
+      name: graph_export
+      volume_type: MANAGED
+      comment: openCypher CSVs for the Neptune bulk loader (current/nodes, current/edges).
