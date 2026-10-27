@@ -7,3 +7,4 @@ cdk.context.json
 data/generated/
 .DS_Store
 build/
+data/sources/

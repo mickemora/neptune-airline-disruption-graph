@@ -1,0 +1,41 @@
+version: 1.1
+comment: "Day-of-operations flight KPIs: capacity, load and posted delays, one row per scheduled leg."
+source: ${catalog}.airline_gold.node_flight
+dimensions:
+  - name: Origin
+    expr: origin
+    comment: "Departure airport (IATA)."
+  - name: Destination
+    expr: dest
+    comment: "Arrival airport (IATA)."
+  - name: Departure Hour
+    expr: CAST(FLOOR(sched_dep_min / 60) AS INT)
+    comment: "Scheduled departure hour in hub time (0-23)."
+  - name: Status
+    expr: status
+    comment: "SCHEDULED, or DELAYED when ops control posted a later estimate."
+  - name: Tail
+    expr: tail
+    comment: "Aircraft operating the leg."
+measures:
+  - name: Flights
+    expr: COUNT(1)
+    comment: "Scheduled legs."
+  - name: Seats
+    expr: SUM(capacity)
+    comment: "Seats offered."
+  - name: Passengers Booked
+    expr: SUM(booked)
+    comment: "Confirmed segments."
+  - name: Load Factor
+    expr: SUM(booked) / SUM(capacity)
+    comment: "Passengers booked divided by seats offered."
+  - name: Open Seats
+    expr: SUM(seats_available)
+    comment: "Seats still available for rebooking."
+  - name: Delayed Flights
+    expr: COUNT(1) FILTER (WHERE status = 'DELAYED')
+    comment: "Legs with a posted estimated departure later than scheduled."
+  - name: Average Delay Minutes
+    expr: AVG(est_delay_min) FILTER (WHERE est_delay_min > 0)
+    comment: "Average posted delay across delayed legs."

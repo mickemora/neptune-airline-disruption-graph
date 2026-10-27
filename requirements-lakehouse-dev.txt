@@ -1,0 +1,4 @@
+# Run the Databricks pipeline's transformations locally (tests/test_lakehouse.py).
+# Needs a Java 17+ runtime.
+pyspark>=3.5,<5
+pyyaml>=6

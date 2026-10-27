@@ -15,16 +15,21 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - uses: actions/setup-java@v4          # local Spark for the lakehouse tests
+        with:
+          distribution: temurin
+          java-version: "17"
       - name: Install
         run: |
           pip install -r requirements-dev.txt
           npm install -g aws-cdk
       - name: Unit tests
         run: pytest -q
-      - name: Agent SDK and UI tests must run, not skip
+      - name: Agent SDK, UI and lakehouse tests must run, not skip
         run: |
-          pytest -q -rs tests/test_agent.py tests/test_agentcore.py tests/test_ui.py | tee /tmp/agent-tests.txt
-          ! grep -q SKIP /tmp/agent-tests.txt
+          pytest -q -rs tests/test_agent.py tests/test_agentcore.py tests/test_ui.py \
+            tests/test_lakehouse.py tests/test_ontology.py tests/test_bundle.py | tee /tmp/must-run.txt
+          ! grep -q SKIP /tmp/must-run.txt
       - name: CDK synth (environment-agnostic, no AWS credentials needed)
         run: cdk synth --quiet
       - name: AgentCore code package is complete (Linux arm64)

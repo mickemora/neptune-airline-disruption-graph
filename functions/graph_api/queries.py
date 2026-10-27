@@ -8,6 +8,12 @@ RETURN labels(n)[0] AS label, count(n) AS count
 ORDER BY label
 """
 
+# Governed operating rules (BusinessRule nodes, published from the lakehouse).
+BUSINESS_RULES = """
+MATCH (r:BusinessRule)
+RETURN r.ruleId AS ruleId, r.value AS value
+"""
+
 ROUTES_FROM = """
 MATCH (a:Airport {code: $airport})-[r:ROUTE]->(b:Airport)
 RETURN b.code AS dest, b.city AS city, r.distanceMi AS distanceMi

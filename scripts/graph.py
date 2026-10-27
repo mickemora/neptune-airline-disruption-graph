@@ -4,6 +4,7 @@
 Examples:
   python scripts/graph.py diagnose                # can the Lambda reach Neptune? any load jobs?
   python scripts/graph.py load                    # start bulk load, then poll until done
+  python scripts/graph.py load --from-databricks  # replace the graph with the lakehouse export
   python scripts/graph.py query summary
   python scripts/graph.py query hub_connections --params '{"limit": 5}'
   python scripts/graph.py query aircraft_rotation --params '{"tail": "N901DM"}'
@@ -33,9 +34,13 @@ import visualize
 STACK = "NeptuneAirlineDisruptionStack"
 
 
-def function_name() -> str:
+def stack_output(key: str) -> str:
     outputs = boto3.client("cloudformation").describe_stacks(StackName=STACK)["Stacks"][0]["Outputs"]
-    return next(o["OutputValue"] for o in outputs if o["OutputKey"] == "GraphApiFunctionName")
+    return next(o["OutputValue"] for o in outputs if o["OutputKey"] == key)
+
+
+def function_name() -> str:
+    return stack_output("GraphApiFunctionName")
 
 
 def invoke(payload: dict) -> object:
@@ -69,8 +74,54 @@ def print_table(rows) -> None:
         print("  ".join(v.ljust(w) for v, w in zip(row, widths)))
 
 
-def cmd_load(_args) -> None:
-    ids = invoke({"action": "load"})
+EXPORT_PATH = "/Volumes/{catalog}/airline_gold/graph_export/current"
+
+
+def stage_databricks_export(catalog: str, profile: str | None, workspace=None, s3=None,
+                            bucket: str | None = None) -> tuple[str, dict]:
+    """Copy the lakehouse's graph export from its Unity Catalog volume to the data bucket.
+
+    Databricks Free Edition can't write to your S3 bucket, so the laptop relays the files:
+    Files API download -> S3 put. Returns (s3 uri of the staged export, its manifest).
+    """
+    if workspace is None:
+        from databricks.sdk import WorkspaceClient  # pip install databricks-sdk
+        workspace = WorkspaceClient(profile=profile) if profile else WorkspaceClient()
+    s3 = s3 or boto3.client("s3")
+    bucket = bucket or stack_output("DataBucketName")
+    base = EXPORT_PATH.format(catalog=catalog)
+    try:
+        manifest = json.loads(workspace.files.download(f"{base}/manifest.json").contents.read())
+    except Exception as exc:
+        sys.exit(f"error: no complete export at {base} ({exc}). Run the Databricks job "
+                 "airline-ops-daily first.")
+    prefix = f"databricks/{time.strftime('%Y%m%dT%H%M%S')}"
+    copied = 0
+    for folder in ("nodes", "edges"):
+        for entry in workspace.files.list_directory_contents(f"{base}/{folder}"):
+            if entry.is_directory or not entry.name.endswith(".csv"):
+                continue
+            body = workspace.files.download(entry.path).contents.read()
+            s3.put_object(Bucket=bucket, Key=f"{prefix}/{folder}/{entry.name}", Body=body)
+            copied += 1
+    s3.put_object(Bucket=bucket, Key=f"{prefix}/manifest.json",
+                  Body=json.dumps(manifest, indent=2).encode())
+    print(f"Staged {copied} files from {base} to s3://{bucket}/{prefix}/")
+    return f"s3://{bucket}/{prefix}", manifest
+
+
+def cmd_load(args) -> None:
+    payload = {"action": "load"}
+    if getattr(args, "from_databricks", False):
+        source, manifest = stage_databricks_export(args.catalog, args.profile)
+        print("Export counts:", json.dumps(manifest.get("counts", {})))
+        if manifest.get("businessRules"):
+            print("Business rules:", json.dumps(manifest["businessRules"]))
+        if not args.keep:
+            print("Clearing the current graph (use --keep to merge instead)...")
+            print(" ", invoke({"action": "clear"}))
+        payload["source"] = source
+    ids = invoke(payload)
     print(f"nodes load {ids['nodesLoadId']}\nedges load {ids['edgesLoadId']}")
     for label in ("nodesLoadId", "edgesLoadId"):
         while True:
@@ -166,7 +217,14 @@ def cmd_visualize(args) -> None:
 def main() -> None:
     p = argparse.ArgumentParser(description="Airline disruption graph client")
     sub = p.add_subparsers(required=True)
-    sub.add_parser("load").set_defaults(fn=cmd_load)
+    ld = sub.add_parser("load", help="bulk load the graph (synthetic data by default)")
+    ld.add_argument("--from-databricks", action="store_true",
+                    help="load the graph export written by the Databricks job instead")
+    ld.add_argument("--catalog", default="workspace", help="Unity Catalog catalog (Databricks)")
+    ld.add_argument("--profile", help="Databricks CLI profile (default: DEFAULT / env vars)")
+    ld.add_argument("--keep", action="store_true",
+                    help="don't clear the existing graph before loading")
+    ld.set_defaults(fn=cmd_load)
     sub.add_parser("diagnose").set_defaults(
         fn=lambda _a: print(json.dumps(invoke({"action": "diagnose"}), indent=2)))
     q = sub.add_parser("query")

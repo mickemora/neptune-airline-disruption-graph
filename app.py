@@ -16,12 +16,13 @@ Context overrides (cdk deploy -c key=value):
 Several stacks: deploy and destroy with --all (`cdk deploy --all`, `cdk destroy --all`).
 """
 
+import json
 import os
 from pathlib import Path
 
 import aws_cdk as cdk
 
-from datagen.generate import Generator
+from datagen.generate import DATA_FORMAT, Generator
 from scripts.build_agent_package import build as build_agent_package
 from infra.agentcore_stack import AgentCoreStack
 from infra.graph_explorer_stack import DEFAULT_PLATFORM, GraphExplorerStack
@@ -30,8 +31,16 @@ from infra.neptune_stack import NeptuneAirlineStack
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data" / "generated"
 
-# Generate the synthetic dataset on first synth so the S3 deployment has something to upload.
-if not (DATA_DIR / "manifest.json").exists():
+# Generate the synthetic dataset on first synth so the S3 deployment has something to upload,
+# and again when the CSV layout has changed since it was generated.
+def _data_format() -> int:
+    try:
+        return json.loads((DATA_DIR / "manifest.json").read_text()).get("format", 1)
+    except (OSError, ValueError):
+        return 0
+
+
+if _data_format() != DATA_FORMAT:
     Generator().run().write(DATA_DIR)
 
 app = cdk.App()

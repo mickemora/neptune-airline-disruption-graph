@@ -1,0 +1,14 @@
+resources:
+  pipelines:
+    airline_ops_lakehouse:
+      name: airline-ops-lakehouse
+      catalog: ${var.catalog}
+      schema: ${resources.schemas.airline_bronze.name}   # default; silver/gold use full names
+      serverless: true
+      channel: CURRENT
+      root_path: ../src/pipeline
+      libraries:
+        - glob:
+            include: ../src/pipeline/transformations/**
+      configuration:
+        airline.catalog: ${var.catalog}

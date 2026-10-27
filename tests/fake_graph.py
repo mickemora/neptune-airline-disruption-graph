@@ -46,6 +46,8 @@ class FakeGraph:
         self.bookings = defaultdict(list)            # passengerId -> [flightId]
         for b in _read(e / "booked_on.csv"):
             self.bookings[b["START_ID"][3:]].append(b["END_ID"][3:])
+        rules = n / "business_rules.csv"
+        self.rules = _read(rules) if rules.exists() else []
 
     # FLIGHT_LEG (empty list when the flight does not exist)
     def flight_leg(self, flightId):
@@ -139,6 +141,8 @@ class FakeGraph:
     def run(self, query, params=None):
         """Drop-in replacement for handler.run, dispatching on query text."""
         params = params or {}
+        if query == queries.BUSINESS_RULES:
+            return [{"ruleId": r["ruleId"], "value": r["value"]} for r in self.rules]
         if query == queries.FLIGHT_LEG:
             return self.flight_leg(params["flightId"])
         if query == queries.AIRCRAFT_RIPPLE:

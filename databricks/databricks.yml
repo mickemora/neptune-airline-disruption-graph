@@ -1,0 +1,32 @@
+# Databricks bundle: the lakehouse that feeds the Neptune graph.
+#
+#   cd databricks
+#   databricks bundle validate
+#   databricks bundle deploy
+#   databricks bundle run airline_ops_daily      # setup -> land -> pipeline -> semantic -> export
+#
+# Works on Databricks Free Edition (serverless only, catalog "workspace").
+
+bundle:
+  name: airline_ops_lakehouse
+
+sync:
+  paths:
+    - .
+    - ../datagen        # the source-system simulator and shared business rules
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: Unity Catalog catalog that holds the airline_* schemas.
+    default: workspace
+
+targets:
+  dev:
+    default: true
+    # No `mode: development`: it would prefix the schema names, and the tasks and the
+    # Neptune loader look for the plain airline_* names.
+    workspace:
+      root_path: ~/.bundle/${bundle.name}/${bundle.target}
